@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.egress_ended",
+  "description": "A room recording egress finished. stapel-recordings (or any subscriber) uses the storage_key to finalize the corresponding upload session. stapel-video ships no recording pipeline and imports no recordings model — the integration is this event only.",
+  "type": "object",
+  "required": ["egress_id"],
+  "properties": {
+    "egress_id":   { "type": "string" },
+    "status":      { "type": ["string", "null"] },
+    "storage_key": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

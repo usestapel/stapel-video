@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "user.deleted",
+  "description": "An account deletion was executed. stapel-video erases the user's created rooms (and their participants) and the user's participations in other rooms.",
+  "type": "object",
+  "required": ["user_id"],
+  "properties": {
+    "user_id":        { "type": "string", "format": "uuid" },
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "trigger":        { "type": "string", "enum": ["manual", "inactivity", "platform"] },
+    "deleted_at":     { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true
+}
