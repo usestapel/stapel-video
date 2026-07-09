@@ -1,0 +1,92 @@
+{
+  "module": "stapel-video",
+  "version": "0.1.0",
+  "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.",
+  "axes": [
+    {
+      "key": "VIDEO_PROVIDER",
+      "kind": "enum",
+      "default": "stapel_video.providers.livekit.LiveKitProvider",
+      "group": "video.provider",
+      "gates": {
+        "operations": [],
+        "co_gates": [],
+        "behavior": "A dotted path to a VideoProvider implementation; the default is stapel_video.providers.livekit.LiveKitProvider."
+      },
+      "curated": {
+        "summary": "Selects the video-conferencing vendor behind every call. The default routes calls through LiveKit; point it at another backend that implements the provider seam to switch vendors without code changes. Changes who carries the media, not which endpoints exist.",
+        "business_label": "Which service runs the video calls"
+      }
+    },
+    {
+      "key": "DEFAULT_ACCESS_LEVEL",
+      "kind": "enum",
+      "default": "restricted",
+      "group": "video.access",
+      "gates": {
+        "operations": [],
+        "co_gates": [],
+        "behavior": "public: anyone with the code auto-admits; scope_trusted: scope members auto-admit, others lobby; restricted: only the host auto-admits, everyone else lobbies."
+      },
+      "curated": {
+        "summary": "The admission level a room gets when the creator does not pick one. \"public\": anyone with the join code joins instantly. \"scope_trusted\": members of the same workspace/org/tenant join instantly, outsiders wait. \"restricted\" (default): everyone but the host waits in the lobby. A client can always override per room.",
+        "business_label": "How open new rooms are by default"
+      }
+    },
+    {
+      "key": "DEFAULT_ADMIT_REQUIRED",
+      "kind": "bool",
+      "default": true,
+      "group": "video.admission",
+      "gates": {
+        "operations": [],
+        "co_gates": [],
+        "behavior": "true: non-auto-admitted joiners wait for host admission; false: the lobby is off and joiners are admitted directly."
+      },
+      "curated": {
+        "summary": "Whether a freshly created room turns the lobby on by default (guests who are not auto-admitted wait for a host to let them in). True by default — the safe, gate-the-door setting; set False for open drop-in rooms. A client can override per room.",
+        "business_label": "Whether new rooms start with a waiting room"
+      }
+    }
+  ],
+  "extension_points": [
+    {
+      "name": "VIDEO_PROVIDER",
+      "kind": "dotted_path",
+      "summary": "Swap the video backend (the VideoProvider ABC: mint join token, create room, start/stop recording egress, verify webhook). The default is the LiveKit implementation behind the [livekit] extra; point it at your own backend to change vendor without forking."
+    },
+    {
+      "name": "SCOPE_PROVIDER",
+      "kind": "dotted_path",
+      "summary": "Swap how the opaque scope_key (workspace/org/tenant) is resolved from the request and how scope membership is decided — membership is what makes a scope_trusted room auto-admit the caller. The default is a single global scope where every authenticated user is a member."
+    },
+    {
+      "name": "video.egress_ended",
+      "kind": "comm_event",
+      "summary": "The recording seam: when a room recording finishes, the module emits this event carrying the storage key — stapel-recordings (or any subscriber) finalizes the upload. This library ships no recording pipeline and imports no recordings model."
+    },
+    {
+      "name": "serializer_seams",
+      "kind": "class_override",
+      "summary": "Every view declares request/response serializer seams (SerializerSeamMixin) — subclass the view, override the attribute, remount the URL."
+    }
+  ],
+  "operations_total": 7,
+  "requires": [
+    {
+      "module": "stapel-core",
+      "optional": false,
+      "reason": "comm bus (video.egress_ended emit, user.deleted consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination"
+    },
+    {
+      "module": "stapel-auth",
+      "optional": true,
+      "reason": "every endpoint but the provider webhook requires an authenticated user (IsAuthenticated); stapel-auth is the shelf's session issuer — any stapel-core-compatible JWT issuer satisfies the check"
+    },
+    {
+      "module": "stapel-recordings",
+      "optional": true,
+      "reason": "subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber"
+    }
+  ]
+}

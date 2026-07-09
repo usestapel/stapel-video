@@ -1,0 +1,526 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "",
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/video/api/rooms": {
+      "post": {
+        "operationId": "video_api_rooms_create",
+        "description": "Create a room (the creator is auto-admitted as host, with a token).\n\n**Permissions:** `IsAuthenticated`",
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoomCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RoomCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/RoomCreateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/rooms/{join_code}": {
+      "get": {
+        "operationId": "video_api_rooms_retrieve",
+        "description": "Room info by join code.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "join_code",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/rooms/{join_code}/join": {
+      "post": {
+        "operationId": "video_api_rooms_join_create",
+        "description": "Join a room by join code. Resolves the access level to admitted /\nwaiting / denied.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "join_code",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/rooms/{join_code}/lobby/admit": {
+      "post": {
+        "operationId": "video_api_rooms_lobby_admit_create",
+        "description": "Admit a waiting participant (host-only). Returns their join token.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "join_code",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmitResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/rooms/{join_code}/lobby/deny": {
+      "post": {
+        "operationId": "video_api_rooms_lobby_deny_create",
+        "description": "Deny a waiting participant (host-only).\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "join_code",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LobbyActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LobbyActionRequest"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/rooms/{join_code}/participants": {
+      "get": {
+        "operationId": "video_api_rooms_participants_retrieve",
+        "description": "Anchor-paginated (FIFO) listing of a room's participants.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "anchor",
+            "schema": {
+              "type": "string"
+            },
+            "description": "joined_at cursor (exclusive)"
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "schema": {
+              "type": "string"
+            },
+            "description": "next (default) | prev | center"
+          },
+          {
+            "in": "path",
+            "name": "join_code",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Page size (default 100, max 1000)"
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParticipantListResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/webhook": {
+      "post": {
+        "operationId": "video_api_webhook_create",
+        "description": "Provider webhook ingress (unauthenticated — the provider signs it).\n\n``services.handle_webhook`` verifies the signature and, on an egress-ended\nevent, emits ``video.egress_ended`` for stapel-recordings to finalize the\nupload.\n\n**Permissions:** `AllowAny`",
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdmitResponse": {
+        "type": "object",
+        "description": "The outcome of a host admit action.",
+        "properties": {
+          "participant": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ParticipantResponse"
+              }
+            ],
+            "description": "The now-admitted participant"
+          },
+          "token": {
+            "type": "string",
+            "description": "The join token minted for them"
+          }
+        },
+        "required": [
+          "participant",
+          "token"
+        ]
+      },
+      "JoinResponse": {
+        "type": "object",
+        "description": "The outcome of a join attempt.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "admitted / waiting / denied"
+          },
+          "room": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RoomResponse"
+              }
+            ],
+            "description": "The room joined"
+          },
+          "participant": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ParticipantResponse"
+              }
+            ],
+            "description": "The caller's participant row"
+          },
+          "token": {
+            "type": "string",
+            "nullable": true,
+            "description": "A signed join token (only when status == admitted)"
+          }
+        },
+        "required": [
+          "participant",
+          "room",
+          "status"
+        ]
+      },
+      "LobbyActionRequest": {
+        "type": "object",
+        "description": "Admit or deny a waiting participant.",
+        "properties": {
+          "participant_id": {
+            "type": "string",
+            "description": "The waiting participant's id (UUID)"
+          }
+        },
+        "required": [
+          "participant_id"
+        ]
+      },
+      "ParticipantListResponse": {
+        "type": "object",
+        "description": "An anchor-paginated page of participants (mirrors core AnchorPagination).",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParticipantResponse"
+            },
+            "description": "Participants in this page (FIFO by joined_at)"
+          },
+          "next_anchor": {
+            "type": "string",
+            "nullable": true,
+            "description": "joined_at cursor for the next page, or null"
+          },
+          "prev_anchor": {
+            "type": "string",
+            "nullable": true,
+            "description": "joined_at cursor for the previous page, or null"
+          },
+          "has_next": {
+            "type": "boolean",
+            "description": "More items after this page"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "description": "Items before this page"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Items in this page"
+          }
+        }
+      },
+      "ParticipantResponse": {
+        "type": "object",
+        "description": "A participant in a room.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Participant id (UUID)"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "The participant's user id"
+          },
+          "status": {
+            "type": "string",
+            "description": "waiting / admitted / denied / left"
+          },
+          "role": {
+            "type": "string",
+            "description": "host / guest"
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the participant first joined (lobby FIFO order)"
+          }
+        },
+        "required": [
+          "id",
+          "joined_at",
+          "role",
+          "status",
+          "user_id"
+        ]
+      },
+      "RoomCreateRequest": {
+        "type": "object",
+        "description": "Create a room.",
+        "properties": {
+          "access_level": {
+            "type": "string",
+            "nullable": true,
+            "description": "public / scope_trusted / restricted. Omit for the"
+          },
+          "admit_required": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "Whether the lobby starts on. Omit for the configured"
+          }
+        }
+      },
+      "RoomResponse": {
+        "type": "object",
+        "description": "A video room.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Room id (UUID)"
+          },
+          "join_code": {
+            "type": "string",
+            "description": "Human-shareable join code (abc-defg-hij)"
+          },
+          "scope_key": {
+            "type": "string",
+            "description": "Opaque host scope (workspace/org/tenant)"
+          },
+          "access_level": {
+            "type": "string",
+            "description": "public / scope_trusted / restricted"
+          },
+          "admit_required": {
+            "type": "boolean",
+            "description": "Whether the lobby is on"
+          },
+          "created_by_id": {
+            "type": "string",
+            "description": "Creator's user id"
+          },
+          "provider_room_ref": {
+            "type": "string",
+            "description": "Opaque provider room reference"
+          }
+        },
+        "required": [
+          "access_level",
+          "admit_required",
+          "created_by_id",
+          "id",
+          "join_code",
+          "provider_room_ref",
+          "scope_key"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "JWTCookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "stapel_jwt",
+        "description": "JWT token stored in cookie. Login via /auth/admin/ to get the cookie."
+      }
+    }
+  }
+}
