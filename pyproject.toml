@@ -23,7 +23,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "stapel-core>=0.9,<0.10",
+    "stapel-core>=0.10,<0.11",
 ]
 
 [project.urls]
