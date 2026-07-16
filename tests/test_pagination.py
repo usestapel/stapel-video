@@ -10,11 +10,11 @@ pytestmark = pytest.mark.django_db
 def _room_with_participants(api_client, host, joiners):
     api_client.force_authenticate(user=host)
     code = api_client.post(
-        "/video/api/rooms", {"access_level": "public"}, format="json"
+        "/video/api/v1/rooms", {"access_level": "public"}, format="json"
     ).data["room"]["join_code"]
     for u in joiners:
         api_client.force_authenticate(user=u)
-        api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+        api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     return code
 
 
@@ -28,7 +28,7 @@ def test_participants_listing_is_anchor_paginated(api_client, django_user_model)
     # host + 4 joiners = 5 participants.
 
     api_client.force_authenticate(user=host)
-    resp = api_client.get(f"/video/api/rooms/{code}/participants", {"limit": 2})
+    resp = api_client.get(f"/video/api/v1/rooms/{code}/participants", {"limit": 2})
     assert resp.status_code == 200
     body = resp.data
     # Anchor-pagination envelope shape (mirrors core AnchorPagination).
@@ -39,7 +39,7 @@ def test_participants_listing_is_anchor_paginated(api_client, django_user_model)
 
     # Walk to the next page via the returned cursor (params dict URL-encodes it).
     resp2 = api_client.get(
-        f"/video/api/rooms/{code}/participants",
+        f"/video/api/v1/rooms/{code}/participants",
         {"limit": 2, "anchor": body["next_anchor"]},
     )
     page1_ids = {p["id"] for p in body["items"]}
@@ -54,9 +54,9 @@ def test_participants_listing_rejects_no_limit_offset_semantics(api_client, user
     # There is simply no `offset` param — the whole set comes back anchored.
     api_client.force_authenticate(user=user)
     code = api_client.post(
-        "/video/api/rooms", {"access_level": "public"}, format="json"
+        "/video/api/v1/rooms", {"access_level": "public"}, format="json"
     ).data["room"]["join_code"]
-    resp = api_client.get(f"/video/api/rooms/{code}/participants")
+    resp = api_client.get(f"/video/api/v1/rooms/{code}/participants")
     assert resp.status_code == 200
     assert resp.data["count"] == 1
     assert resp.data["has_next"] is False
@@ -65,10 +65,10 @@ def test_participants_listing_rejects_no_limit_offset_semantics(api_client, user
 def test_participants_queryset_fifo(api_client, user, other_user):
     api_client.force_authenticate(user=user)
     code = api_client.post(
-        "/video/api/rooms", {"access_level": "public"}, format="json"
+        "/video/api/v1/rooms", {"access_level": "public"}, format="json"
     ).data["room"]["join_code"]
     api_client.force_authenticate(user=other_user)
-    api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
 
     room = services.get_room(code)
     ordered = list(services.participants_queryset(room))

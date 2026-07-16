@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.1.0"
+version = "0.1.1"
 description = "Video calls (rooms, lobby admission, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }

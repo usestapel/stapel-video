@@ -19,7 +19,7 @@ def main(argv=None):
     return run_capabilities_cli(
         argv,
         repo=Path(__file__).resolve().parent,
-        canonical_prefix="/video",
+        canonical_prefix="/video/api/v1",
         defaults=DEFAULTS,
         registry=GATE_REGISTRY,
         is_axis=lambda k: k in _AXES,

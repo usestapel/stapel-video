@@ -108,7 +108,7 @@ class RoomListCreateView(SerializerSeamMixin, APIView):
         request=RoomCreateRequestSerializer,
         responses={201: JoinResponseSerializer},
     )
-    def post(self, request):
+    def post(self, request):  # noqa: R007
         ser = self.get_request_serializer_class()(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
@@ -146,7 +146,7 @@ class RoomDetailView(SerializerSeamMixin, APIView):
     response_serializer_class = RoomResponseSerializer
 
     @extend_schema(responses={200: RoomResponseSerializer})
-    def get(self, request, join_code):
+    def get(self, request, join_code):  # noqa: R007
         room = services.get_room(join_code)
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
@@ -163,7 +163,7 @@ class RoomJoinView(SerializerSeamMixin, APIView):
     response_serializer_class = JoinResponseSerializer
 
     @extend_schema(request=None, responses={200: JoinResponseSerializer})
-    def post(self, request, join_code):
+    def post(self, request, join_code):  # noqa: R007
         room = services.get_room(join_code)
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
@@ -200,7 +200,7 @@ class RoomParticipantsView(SerializerSeamMixin, APIView):
         ],
         responses={200: ParticipantListResponseSerializer},
     )
-    def get(self, request, join_code):
+    def get(self, request, join_code):  # noqa: R007
         room = services.get_room(join_code)
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
@@ -256,7 +256,7 @@ class LobbyAdmitView(_LobbyActionView):
     @extend_schema(
         request=LobbyActionRequestSerializer, responses={200: AdmitResponseSerializer}
     )
-    def post(self, request, join_code):
+    def post(self, request, join_code):  # noqa: R007
         resolved, err = self._resolve(request, join_code)
         if err is not None:
             return err
@@ -284,7 +284,7 @@ class LobbyDenyView(_LobbyActionView):
     @extend_schema(
         request=LobbyActionRequestSerializer, responses={200: LobbyActionRequestSerializer}
     )
-    def post(self, request, join_code):
+    def post(self, request, join_code):  # noqa: R007
         resolved, err = self._resolve(request, join_code)
         if err is not None:
             return err
@@ -292,7 +292,7 @@ class LobbyDenyView(_LobbyActionView):
         participant = services.deny_participant(room, participant_id)
         if participant is None:
             return StapelErrorResponse(404, ERR_404_PARTICIPANT_NOT_FOUND)
-        return StapelResponse({"status": "denied", "participant_id": str(participant.id)})
+        return StapelResponse({"status": "denied", "participant_id": str(participant.id)})  # noqa: R006
 
 
 @extend_schema(tags=["Video"])
@@ -307,10 +307,10 @@ class WebhookIngressView(APIView):
     authentication_classes: list = []
 
     @extend_schema(request=None, responses={200: None})
-    def post(self, request):
+    def post(self, request):  # noqa: R007
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
         try:
             parsed = services.handle_webhook(request.body, auth_header)
         except VideoProviderError:
             return StapelErrorResponse(400, ERR_400_INVALID_WEBHOOK)
-        return StapelResponse({"event": parsed.get("event"), "ok": True})
+        return StapelResponse({"event": parsed.get("event"), "ok": True})  # noqa: R006

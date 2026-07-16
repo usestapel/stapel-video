@@ -10,7 +10,7 @@ FAKE = "stapel_video.tests.fakeprovider.FakeProvider"
 
 
 def _create(client, **body):
-    return client.post("/video/api/rooms", body, format="json")
+    return client.post("/video/api/v1/rooms", body, format="json")
 
 
 def test_create_room_auto_admits_creator_as_host(auth_client, user):
@@ -48,7 +48,7 @@ def test_public_room_join_auto_admits_stranger(api_client, user, other_user):
     code = _create(api_client, access_level="public").data["room"]["join_code"]
 
     api_client.force_authenticate(user=other_user)
-    resp = api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    resp = api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     assert resp.status_code == 200, resp.data
     assert resp.data["status"] == "admitted"
     assert resp.data["token"]
@@ -59,7 +59,7 @@ def test_restricted_room_join_waits_in_lobby(api_client, user, other_user):
     code = _create(api_client, access_level="restricted").data["room"]["join_code"]
 
     api_client.force_authenticate(user=other_user)
-    resp = api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    resp = api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     assert resp.status_code == 200
     assert resp.data["status"] == "waiting"
     assert resp.data["token"] is None
@@ -70,7 +70,7 @@ def test_restricted_room_join_waits_in_lobby(api_client, user, other_user):
 
 def test_restricted_room_host_rejoin_is_admitted(auth_client, user):
     code = _create(auth_client, access_level="restricted").data["room"]["join_code"]
-    resp = auth_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    resp = auth_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     assert resp.data["status"] == "admitted"
     assert resp.data["token"]
 
@@ -89,25 +89,25 @@ def test_scope_trusted_admits_members_lobbies_outsiders(api_client, django_user_
 
     # carol is a scope member -> auto-admitted.
     api_client.force_authenticate(user=carol)
-    resp = api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    resp = api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     assert resp.data["status"] == "admitted"
     assert resp.data["token"]
 
     # bob is not a member -> lobby.
     api_client.force_authenticate(user=bob)
-    resp = api_client.post(f"/video/api/rooms/{code}/join", {}, format="json")
+    resp = api_client.post(f"/video/api/v1/rooms/{code}/join", {}, format="json")
     assert resp.data["status"] == "waiting"
 
 
 def test_join_unknown_room_404(auth_client):
-    resp = auth_client.post("/video/api/rooms/zzz-zzzz-zzz/join", {}, format="json")
+    resp = auth_client.post("/video/api/v1/rooms/zzz-zzzz-zzz/join", {}, format="json")
     assert resp.status_code == 404
     assert resp.data["localizable_error"] == "error.404.video_room_not_found"
 
 
 def test_room_info(auth_client):
     code = _create(auth_client, access_level="public").data["room"]["join_code"]
-    resp = auth_client.get(f"/video/api/rooms/{code}")
+    resp = auth_client.get(f"/video/api/v1/rooms/{code}")
     assert resp.status_code == 200
     assert resp.data["join_code"] == code
     assert resp.data["access_level"] == "public"
@@ -121,4 +121,4 @@ def test_join_code_shape(auth_client):
 
 
 def test_endpoints_require_auth(api_client):
-    assert api_client.post("/video/api/rooms", {}, format="json").status_code in (401, 403)
+    assert api_client.post("/video/api/v1/rooms", {}, format="json").status_code in (401, 403)

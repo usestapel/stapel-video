@@ -8,7 +8,7 @@ pytestmark = pytest.mark.django_db
 
 def _post(api_client, body: dict, *, auth: str):
     return api_client.post(
-        "/video/api/webhook",
+        "/video/api/v1/webhook",
         data=json.dumps(body),
         content_type="application/json",
         HTTP_AUTHORIZATION=auth,
@@ -48,7 +48,7 @@ def test_unsigned_webhook_rejected(api_client, captured_events):
 
 def test_garbage_body_rejected(api_client, captured_events):
     resp = api_client.post(
-        "/video/api/webhook",
+        "/video/api/v1/webhook",
         data=b"\x00\x01 not json",
         content_type="application/octet-stream",
         HTTP_AUTHORIZATION="Bearer good-signature",

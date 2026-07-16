@@ -5,9 +5,9 @@
     "version": "0.0.0"
   },
   "paths": {
-    "/video/api/rooms": {
+    "/video/api/v1/rooms": {
       "post": {
-        "operationId": "video_api_rooms_create",
+        "operationId": "video_api_v1_rooms_create",
         "description": "Create a room (the creator is auto-admitted as host, with a token).\n\n**Permissions:** `IsAuthenticated`",
         "tags": [
           "Video"
@@ -50,9 +50,9 @@
         }
       }
     },
-    "/video/api/rooms/{join_code}": {
+    "/video/api/v1/rooms/{join_code}": {
       "get": {
-        "operationId": "video_api_rooms_retrieve",
+        "operationId": "video_api_v1_rooms_retrieve",
         "description": "Room info by join code.\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
@@ -86,9 +86,9 @@
         }
       }
     },
-    "/video/api/rooms/{join_code}/join": {
+    "/video/api/v1/rooms/{join_code}/join": {
       "post": {
-        "operationId": "video_api_rooms_join_create",
+        "operationId": "video_api_v1_rooms_join_create",
         "description": "Join a room by join code. Resolves the access level to admitted /\nwaiting / denied.\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
@@ -122,9 +122,9 @@
         }
       }
     },
-    "/video/api/rooms/{join_code}/lobby/admit": {
+    "/video/api/v1/rooms/{join_code}/lobby/admit": {
       "post": {
-        "operationId": "video_api_rooms_lobby_admit_create",
+        "operationId": "video_api_v1_rooms_lobby_admit_create",
         "description": "Admit a waiting participant (host-only). Returns their join token.\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
@@ -178,9 +178,9 @@
         }
       }
     },
-    "/video/api/rooms/{join_code}/lobby/deny": {
+    "/video/api/v1/rooms/{join_code}/lobby/deny": {
       "post": {
-        "operationId": "video_api_rooms_lobby_deny_create",
+        "operationId": "video_api_v1_rooms_lobby_deny_create",
         "description": "Deny a waiting participant (host-only).\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
@@ -234,9 +234,9 @@
         }
       }
     },
-    "/video/api/rooms/{join_code}/participants": {
+    "/video/api/v1/rooms/{join_code}/participants": {
       "get": {
-        "operationId": "video_api_rooms_participants_retrieve",
+        "operationId": "video_api_v1_rooms_participants_retrieve",
         "description": "Anchor-paginated (FIFO) listing of a room's participants.\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
@@ -294,9 +294,9 @@
         }
       }
     },
-    "/video/api/webhook": {
+    "/video/api/v1/webhook": {
       "post": {
-        "operationId": "video_api_webhook_create",
+        "operationId": "video_api_v1_webhook_create",
         "description": "Provider webhook ingress (unauthenticated — the provider signs it).\n\n``services.handle_webhook`` verifies the signature and, on an egress-ended\nevent, emits ``video.egress_ended`` for stapel-recordings to finalize the\nupload.\n\n**Permissions:** `AllowAny`",
         "tags": [
           "Video"

@@ -5,7 +5,7 @@ stapel-video emits its **own** contract triad — ``docs/schema.json``
 artifact — empty here, video has no ``@flow_step`` annotations) and
 ``docs/errors.json`` (generate_error_keys registry) — plus ``capabilities.json``
 (the fourth artifact) from a single-module ``{video + core}`` Django instance
-mounted at the canonical ``/video/api/`` prefix.
+mounted at the canonical ``/video/api/v1/`` prefix.
 
 video is not mounted in stapel-example-monolith, so there is no aggregate slice
 to diff against for byte-identity. Standalone validation (contract-pipeline.md
@@ -82,7 +82,7 @@ def test_emission_is_deterministic(tmp_path):
 def test_paths_carry_canonical_prefix():
     schema = json.loads((DOCS / "schema.json").read_text())
     assert schema["paths"], "schema has no paths"
-    assert all(p.startswith("/video/api/") for p in schema["paths"])
+    assert all(p.startswith("/video/api/v1/") for p in schema["paths"])
 
 
 def test_flows_are_empty_no_flow_step_annotations():
