@@ -4,6 +4,14 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] — 2026-07-17
+
+### Changed
+- `stapel-core` ceiling raised `>=0.10,<0.11` → `>=0.10,<0.12` (core 0.11
+  fleet re-pin: default bus, nav, config-checks, error params/language —
+  additive for modules). Contract artifacts regenerated (version bump);
+  suite green with `livekit`/`channels` extras installed.
+
 ## [0.1.0] — 2026-07-10
 
 Initial alpha.

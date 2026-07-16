@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.1.1"
+version = "0.1.2"
 description = "Video calls (rooms, lobby admission, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,7 +23,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "stapel-core>=0.10,<0.11",
+    "stapel-core>=0.10,<0.12",
 ]
 
 [project.urls]
