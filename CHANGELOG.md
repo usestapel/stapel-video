@@ -4,6 +4,13 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-07-17
+
+### Removed
+- Deprecated `default_app_config` marker (and its `__all__` export) from
+  `stapel_video/__init__.py` — obsolete since Django 3.2, removed in Django 4.0;
+  `VideoConfig` is auto-discovered from `apps.py`.
+
 ## [0.1.2] — 2026-07-17
 
 ### Changed

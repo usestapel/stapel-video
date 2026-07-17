@@ -6,7 +6,3 @@ default): rooms with join codes, an access-level admission model
 Channels, and a recording-egress *seam* (start/stop + a ``video.egress_ended``
 comm emit) that integrates with stapel-recordings by event, never by import.
 """
-
-default_app_config = "stapel_video.apps.VideoConfig"
-
-__all__ = ["default_app_config"]
