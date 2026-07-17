@@ -1,6 +1,6 @@
 {
   "module": "stapel-video",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.",
   "axes": [
     {
