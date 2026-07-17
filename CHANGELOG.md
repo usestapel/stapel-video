@@ -4,6 +4,12 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-07-17
+
+Fix-up: 0.2.1's CI/publish failed on contract drift — `docs/capabilities.json`
+embeds the package version and wasn't regenerated for the 0.2.1 bump.
+Regenerated via `make contract`; no other diff.
+
 ## [0.2.1] — 2026-07-17
 
 Fleet follow-up to stapel-core 0.12.0 (legacy shim sweep). No source
