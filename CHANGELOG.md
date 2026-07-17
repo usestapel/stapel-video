@@ -4,6 +4,14 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-07-17
+
+Fleet follow-up to stapel-core 0.12.0 (legacy shim sweep). No source
+changes needed. Full suite green against core 0.12.0.
+
+### Changed
+- `stapel-core` dependency ceiling `<0.12` → `<0.13`.
+
 ## [0.2.0] — 2026-07-17
 
 ### Removed
