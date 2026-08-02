@@ -1,0 +1,91 @@
+# stapel-video 0.2.4
+
+Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.
+
+Contract: axes 3 · extension points 4 · operations 7 · error codes 47.
+Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
+
+## Configuration axes — what a product switches on
+Settings keys; `default` is what you get by saying nothing. Turning an axis off unmounts the operations it gates.
+- DEFAULT_ACCESS_LEVEL [enum, default "restricted"] — How open new rooms are by default
+  The admission level a room gets when the creator does not pick one. "public": anyone with the join code joins instantly. "scope_trusted": members of the same workspace/org/tenant join instantly, outsiders wait. "restricted" (default): everyone but the host waits in the lobby. A client can always override per room.
+- DEFAULT_ADMIT_REQUIRED [bool, default true] — Whether new rooms start with a waiting room
+  Whether a freshly created room turns the lobby on by default (guests who are not auto-admitted wait for a host to let them in). True by default — the safe, gate-the-door setting; set False for open drop-in rooms. A client can override per room.
+- VIDEO_PROVIDER [enum, default "stapel_video.providers.livekit.LiveKitProvider"] — Which service runs the video calls
+  Selects the video-conferencing vendor behind every call. The default routes calls through LiveKit; point it at another backend that implements the provider seam to switch vendors without code changes. Changes who carries the media, not which endpoints exist.
+
+## Extension points — what a product replaces, fork-free
+- SCOPE_PROVIDER [dotted_path]
+  Swap how the opaque scope_key (workspace/org/tenant) is resolved from the request and how scope membership is decided — membership is what makes a scope_trusted room auto-admit the caller. The default is a single global scope where every authenticated user is a member.
+- VIDEO_PROVIDER [dotted_path]
+  Swap the video backend (the VideoProvider ABC: mint join token, create room, start/stop recording egress, verify webhook). The default is the LiveKit implementation behind the [livekit] extra; point it at your own backend to change vendor without forking.
+- serializer_seams [class_override]
+  Every view declares request/response serializer seams (SerializerSeamMixin) — subclass the view, override the attribute, remount the URL.
+- video.egress_ended [comm_event]
+  The recording seam: when a room recording finishes, the module emits this event carrying the storage key — stapel-recordings (or any subscriber) finalizes the upload. This library ships no recording pipeline and imports no recordings model.
+
+## Fits with — fleet dependencies
+- stapel-auth (optional) — every endpoint but the provider webhook requires an authenticated user (IsAuthenticated); stapel-auth is the shelf's session issuer — any stapel-core-compatible JWT issuer satisfies the check
+- stapel-core (required) — comm bus (video.egress_ended emit, user.deleted consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination
+- stapel-recordings (optional) — subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber
+
+## HTTP operations (7) — call by operationId, never by a typed path
+Paths are relative to `/video/api/v1/`.
+### Video
+- POST /rooms — video_api_v1_rooms_create
+- POST /rooms/{join_code}/join — video_api_v1_rooms_join_create
+- POST /rooms/{join_code}/lobby/admit — video_api_v1_rooms_lobby_admit_create
+- POST /rooms/{join_code}/lobby/deny — video_api_v1_rooms_lobby_deny_create
+- GET /rooms/{join_code}/participants — video_api_v1_rooms_participants_retrieve
+- GET /rooms/{join_code} — video_api_v1_rooms_retrieve
+- POST /webhook — video_api_v1_webhook_create
+
+## Error codes (47) — the StapelError envelope
+Render `t(code, params)`; branch UX on the remediation. Localized text lives in docs/errors.<lang>.md, not here.
+- error.400.bad_request [400] fix_input
+- error.400.captcha_invalid [400] retry
+- error.400.captcha_required [400] retry
+- error.400.expected_list [400] fix_input
+- error.400.field.blank [400] fix_input {field}
+- error.400.field.does_not_exist [400] fix_input {field}
+- error.400.field.invalid [400] fix_input {field}
+- error.400.field.invalid_choice [400] fix_input {field}
+- error.400.field.max_length [400] fix_input {field,max_length}
+- error.400.field.max_value [400] fix_input {field,max_value}
+- error.400.field.min_length [400] fix_input {field,min_length}
+- error.400.field.min_value [400] fix_input {field,min_value}
+- error.400.field.null [400] fix_input {field}
+- error.400.field.required [400] fix_input {field}
+- error.400.field.unique [400] fix_input {field}
+- error.400.invalid_ad_id [400] fix_input
+- error.400.validation_error [400] fix_input
+- error.400.verification_failed [400] verify
+- error.400.verification_invalid_factor [400] verify
+- error.400.video_invalid_access_level [400] fix_input
+- error.400.video_invalid_webhook [400] fix_input
+- error.401.unauthorized [401] reauthenticate
+- error.402.payment_required [402] retry
+- error.403.forbidden [403] retry
+- error.403.network_blocked [403] contact_support
+- error.403.verification_enrollment_required [403] verify
+- error.403.verification_required [403] verify
+- error.403.video_join_denied [403] retry
+- error.403.video_not_room_host [403] retry
+- error.404.ad_not_found [404] retry
+- error.404.not_found [404] retry
+- error.404.verification_challenge_not_found [404] verify
+- error.404.video_participant_not_found [404] retry
+- error.404.video_room_not_found [404] retry
+- error.405.method_not_allowed [405] retry
+- error.406.not_acceptable [406] retry
+- error.408.request_timeout [408] retry
+- error.409.conflict [409] fix_input
+- error.410.gone [410] retry
+- error.413.payload_too_large [413] retry
+- error.415.unsupported_media_type [415] retry
+- error.422.unprocessable_entity [422] wait_and_retry
+- error.423.locked [423] wait_and_retry
+- error.423.verification_locked [423] wait_and_retry
+- error.429.rate_limit [429] wait_and_retry {retry_after_minutes}
+- error.429.too_many_requests [429] wait_and_retry
+- error.500.internal [500] contact_support

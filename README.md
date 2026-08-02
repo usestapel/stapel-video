@@ -6,6 +6,7 @@
 [![downloads](https://static.pepy.tech/badge/stapel-video/month)](https://pepy.tech/project/stapel-video)
 [![python](https://img.shields.io/pypi/pyversions/stapel-video?logo=python&logoColor=white)](https://pypi.org/project/stapel-video/)
 [![license](https://img.shields.io/github/license/usestapel/stapel-video)](https://github.com/usestapel/stapel-video/blob/main/LICENSE)
+[![llms.txt](https://img.shields.io/badge/llms.txt-blue)](https://github.com/usestapel/stapel-video/blob/main/docs/llms.txt)
 
 Video calls for the [Stapel](https://github.com/usestapel) framework — a thin,
 provider-agnostic library over a real-time video backend (LiveKit by default).
