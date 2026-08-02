@@ -4,6 +4,17 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.5] — 2026-08-02
+
+Packaging/docs catch-up, no behavior change:
+
+- CI tests the Python the stand actually runs.
+- Contract documents ship in the wheel (`package-data`) (#184).
+- Badge canon + Python 3.14 classifier.
+- `docs/llms.txt` — the fifth contract artifact (badge-canon §3), emitted
+  by `stapel_tools.llms_txt` and checked by the `make contract-check`
+  drift gate.
+
 ## [0.2.3] — 2026-07-17
 
 Fix-up #2: 0.2.2's regen still baked the old version into
