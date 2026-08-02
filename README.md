@@ -1,5 +1,12 @@
 # stapel-video
 
+[![CI](https://img.shields.io/github/actions/workflow/status/usestapel/stapel-video/ci.yml?branch=main&logo=github&label=CI)](https://github.com/usestapel/stapel-video/actions/workflows/ci.yml?query=branch%3Amain)
+[![coverage](https://img.shields.io/codecov/c/github/usestapel/stapel-video?branch=main&logo=codecov&label=coverage)](https://app.codecov.io/gh/usestapel/stapel-video)
+[![pypi](https://img.shields.io/pypi/v/stapel-video?logo=pypi&logoColor=white&label=pypi)](https://pypi.org/project/stapel-video/)
+[![downloads](https://static.pepy.tech/badge/stapel-video/month)](https://pepy.tech/project/stapel-video)
+[![python](https://img.shields.io/pypi/pyversions/stapel-video?logo=python&logoColor=white)](https://pypi.org/project/stapel-video/)
+[![license](https://img.shields.io/github/license/usestapel/stapel-video)](https://github.com/usestapel/stapel-video/blob/main/LICENSE)
+
 Video calls for the [Stapel](https://github.com/usestapel) framework — a thin,
 provider-agnostic library over a real-time video backend (LiveKit by default).
 
