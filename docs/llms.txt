@@ -2,7 +2,7 @@
 
 Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.
 
-Contract: axes 3 · extension points 4 · operations 7 · error codes 47.
+Contract: axes 3 · surface 11 · extension points 4 · operations 7 · error codes 47.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
@@ -13,6 +13,39 @@ Settings keys; `default` is what you get by saying nothing. Turning an axis off 
   Whether a freshly created room turns the lobby on by default (guests who are not auto-admitted wait for a host to let them in). True by default — the safe, gate-the-door setting; set False for open drop-in rooms. A client can override per room.
 - VIDEO_PROVIDER [enum, default "stapel_video.providers.livekit.LiveKitProvider"] — Which service runs the video calls
   Selects the video-conferencing vendor behind every call. The default routes calls through LiveKit; point it at another backend that implements the provider seam to switch vendors without code changes. Changes who carries the media, not which endpoints exist.
+
+## Usage surface — call these before writing your own
+This is the answer to "does Stapel already have something for X?". `instead of` names the outside symbol this one displaces.
+### gate_function
+- admit_participant — stapel_video.services.admit_participant
+  The host's yes, as one operation: flips a waiting participant to admitted, mints that guest's join token and pushes lobby.admitted to the room group. A custom host console or moderation bot calls this instead of writing RoomParticipant.status itself — a bare status write admits nobody, because no token is issued and the waiting client is never told.
+- deny_participant — stapel_video.services.deny_participant
+  The host's no, and it is sticky: a denied guest's re-join stays denied rather than returning to the lobby, and lobby.denied goes out to the room group. Call it instead of deleting the participant row — a deleted row comes back as a fresh WAITING arrival on the next join, which is a knock the host has to answer again.
+- handle_webhook — stapel_video.services.handle_webhook
+  instead of: livekit.api.WebhookReceiver
+  Verify a provider webhook's signature, decode it to a normalized dict and emit video.egress_ended when a recording finished. The shipped ingress view is its only caller in a normal mount; a host that terminates provider webhooks at its own edge (an existing /webhooks router, a queue worker) must feed the raw body and Authorization header through this rather than re-implement verification — an unverified body is an open door into the recording pipeline. A bad signature raises VideoProviderError, which the shipped view maps to a 400.
+- join_room — stapel_video.services.join_room
+  instead of: livekit.api.AccessToken, stapel_video.providers.VideoProvider.mint_join_token
+  THE admission decision: resolves a user against the room's access level and lobby switch into admitted (with a freshly minted join token), waiting (the lobby event goes out to the host's clients) or a sticky denied. Every path that puts a user into a call goes through this — minting a token straight off the provider hands out a media credential that no access level, no host denial and no waiting room ever saw.
+- notify_lobby — stapel_video.realtime.notify_lobby
+  instead of: channels.layers.get_channel_layer
+  Push a live event to a room's lobby group — the one call for reaching the clients watching a room, instead of taking the channel layer into your own hands. Note what it deliberately does NOT do: without Channels, or with no channel layer configured, it returns silently. A feature that must not fail quietly (a host kick, a room PIN) pairs it with stapel-core's register_dependency_check and a visible fallback; a silent no-op here is exactly how such a feature spends a day in production doing nothing.
+- stop_egress — stapel_video.services.stop_egress
+  instead of: livekit.api.LiveKitAPI.egress.stop_egress, stapel_video.providers.VideoProvider.stop_room_egress
+  Stop an active recording through the configured provider — the counterpart of start_egress and the only stop worth calling: the seam is where "stopping an already-finished egress must not raise" is guaranteed, so a stop racing the natural end of a call is not an error the product has to handle.
+### factory
+- create_room — stapel_video.services.create_room
+  instead of: stapel_video.models.Room.objects.create, stapel_video.providers.VideoProvider.create_room
+  Create a call end to end in one transaction: allocate a collision-free join code, provision the media room through the VIDEO_PROVIDER seam and seat the creator as an already-admitted host. Reach for this whenever a product opens a room from its own code (a booking is confirmed, a calendar event starts) — a hand-written Room row is a room with an empty provider_room_ref whose own creator is not a participant, and it fails at the first join.
+- get_room — stapel_video.services.get_room
+  Look a room up by the shareable join code — the join code, not the UUID pk, is the identity every client, URL and invitation carries. Returns None instead of raising, so the caller owns the 404.
+- lobby_group — stapel_video.realtime.lobby_group
+  The Channels group name for a room's lobby. Call it from any consumer or fan-out of your own so your messages land in the group the shipped LobbyConsumer actually joined — the format is not part of the API, and a hand-written f-string stops matching silently the day it changes.
+- participants_queryset — stapel_video.services.participants_queryset
+  The base roster queryset (participants + their users, unfiltered) the shipped anchor-paginated listing is built on — start from it when mounting a roster view of your own so a page stays one query instead of one per participant. It applies no host or scope check: whoever mounts it owns the access decision.
+- start_egress — stapel_video.services.start_egress
+  instead of: livekit.api.LiveKitAPI.egress.start_room_composite_egress, stapel_video.providers.VideoProvider.start_room_egress
+  Start recording a room through whichever backend VIDEO_PROVIDER names, writing the file at a storage key the caller owns (typically a stapel-recordings upload session), and hand back the provider egress id to stop it with. Any product that starts recordings on its own schedule calls this: going at the vendor's egress API directly pins the product to one vendor and drops the file where the recordings side is not looking for it.
 
 ## Extension points — what a product replaces, fork-free
 - SCOPE_PROVIDER [dotted_path]
