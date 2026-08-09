@@ -6,7 +6,7 @@
     {
       "module": "stapel-core",
       "optional": false,
-      "reason": "comm bus (video.egress_ended emit, user.deleted consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination"
+      "reason": "comm bus (video.egress_ended emit; user.deleted and profile.changed consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination"
     },
     {
       "module": "stapel-auth",
@@ -17,6 +17,11 @@
       "module": "stapel-recordings",
       "optional": true,
       "reason": "subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber"
+    },
+    {
+      "module": "stapel-profiles",
+      "optional": true,
+      "reason": "publishes profile.changed, which video consumes to carry a renamed person's new name onto the connections they already hold — the display name is a claim frozen inside the join token, so without that event a rename reaches a live call only when the person happens to reconnect"
     }
   ],
   "extension_points": [

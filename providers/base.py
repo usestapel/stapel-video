@@ -33,7 +33,42 @@ class VideoProvider(ABC):
     def mint_join_token(
         self, provider_room_ref: str, user_id, user_name: str
     ) -> str:
-        """Return a signed token letting ``user_id`` join ``provider_room_ref``."""
+        """Return a signed token letting ``user_id`` join ``provider_room_ref``.
+
+        The name travels INSIDE the token, so it is frozen at mint time. A
+        provider that can push a later correction into a room the person is
+        already sitting in implements :meth:`rename_participant`; see its
+        docstring for why that is not optional in practice.
+        """
+        raise NotImplementedError
+
+    def rename_participant(
+        self, provider_room_ref: str, user_id, user_name: str
+    ) -> int:
+        """Push ``user_name`` onto ``user_id``'s LIVE connections in a room.
+
+        The counterpart to :meth:`mint_join_token`, and the reason it exists:
+        the display name is a claim inside a signed token, so every connection
+        carries the name that was canonical at the instant it was minted. A
+        rename that lands while the person is connected reaches the database
+        and every REST reader immediately and reaches that person's video tile
+        never — until they happen to reconnect. Reconnects are invisible to
+        the people watching, which is what makes the defect read as "one
+        person's tile is wrong": everyone who reconnected after the write
+        looks correct, and whoever held one socket looks stale.
+
+        The provider owns this because the provider owns the identity
+        convention it invented in ``mint_join_token`` — a caller cannot
+        address a connection it never named. Implementations map ``user_id``
+        to their own live connections and return how many they updated; ``0``
+        is the ordinary answer for someone who is not in the room, not a
+        failure. Raise :class:`VideoProviderError` on transport failure.
+
+        Default ``NotImplementedError``, like the egress trio: a token-only
+        backend stays valid. ``actions.handle_profile_changed`` treats it as
+        "this provider cannot push renames" and says so once, rather than
+        pretending the rename arrived.
+        """
         raise NotImplementedError
 
     # ── Recording egress (seam only in v0.1.0) ─────────────────────────

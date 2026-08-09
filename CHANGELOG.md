@@ -4,6 +4,32 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-08-09
+
+A rename now reaches a call that is already running.
+
+The display name travels inside the join token, so it is frozen at the instant
+a connection was made. Every other reader of a name re-reads it and is correct
+as soon as the write commits; a video tile keeps rendering whatever it was
+handed at join. The symptom is not a broken feature — it is one person's tile
+showing an old name while everyone else looks right, because everyone else
+happened to reconnect after the write.
+
+- `VideoProvider.rename_participant(provider_room_ref, user_id, user_name)` —
+  new seam method, the counterpart to `mint_join_token`. Default
+  `NotImplementedError` like the egress trio, so a token-only backend stays
+  valid.
+- `LiveKitProvider` implements it over the RoomService twirp API
+  (`ListParticipants` + `UpdateParticipant`): it updates **every** connection
+  the user holds in the room (one person on two devices is two identities),
+  echoes the participant's metadata back so a rename cannot erase an avatar,
+  and is idempotent under at-least-once redelivery.
+- The module consumes **`profile.changed`** (published by stapel-profiles on
+  every write to the canonical name, including the roster-side correction an
+  owner makes through stapel-workspaces) and pushes the new name into every
+  live room the person is in. Installing the module is enough — there is no
+  host-side wiring to remember.
+
 ## [0.2.5] — 2026-08-02
 
 Packaging/docs catch-up, no behavior change:

@@ -77,11 +77,116 @@ class LiveKitProvider(VideoProvider):
         )
         return token.to_jwt()
 
+    def rename_participant(
+        self, provider_room_ref: str, user_id, user_name: str
+    ) -> int:
+        """Update the name on every live connection ``user_id`` holds here.
+
+        Two calls, because LiveKit addresses a participant by the identity
+        this class minted, not by ``user_id``: ``ListParticipants`` to find
+        the connections whose identity is ``{user_id}_{suffix}``, then one
+        ``UpdateParticipant`` each. Every LiveKit client in the room gets a
+        ``ParticipantNameChanged`` event and re-renders, with no rejoin.
+
+        Matching is on the ``{user_id}_`` PREFIX, deliberately: the suffix is
+        per-connection, so one person on a laptop and a phone is two live
+        identities and both must move. The separator is included in the
+        prefix so one user id can never match another's — bare
+        ``startswith(user_id)`` would be a correctness bug the day ids stop
+        being fixed-width UUIDs.
+
+        The participant's metadata is passed through untouched. LiveKit's
+        UpdateParticipant overwrites metadata with whatever the request
+        carries, so omitting it would silently erase the avatar (or whatever
+        the host put there) as a side effect of a rename — a repair that
+        breaks a neighbouring field is not a repair.
+        """
+        requests = _require_requests()
+        prefix = f"{user_id}_"
+        base = self._http_url()
+        headers = self._room_admin_headers(provider_room_ref)
+        try:
+            resp = requests.post(
+                f"{base}/twirp/livekit.RoomService/ListParticipants",
+                json={"room": provider_room_ref},
+                headers=headers,
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise VideoProviderError(f"list participants transport error: {exc}") from exc
+        if resp.status_code != 200:
+            # LiveKit creates rooms lazily, so a room nobody is in does not
+            # exist and answers twirp `not_found` (HTTP 404) with the message
+            # "requested room does not exist". "Nobody to rename" is the
+            # honest reading of that, not a failure. Keyed on the STATUS, not
+            # the prose: the message carries no substring worth matching, and
+            # the code is the part of the contract that holds still.
+            if resp.status_code == 404:
+                return 0
+            raise VideoProviderError(
+                f"list participants failed: {resp.status_code} {resp.text[:300]}"
+            )
+        participants = resp.json().get("participants") or []
+        renamed = 0
+        for participant in participants:
+            identity = participant.get("identity") or ""
+            if not identity.startswith(prefix):
+                continue
+            if (participant.get("name") or "") == user_name:
+                continue  # already correct — at-least-once delivery, stay idempotent
+            payload = {
+                "room": provider_room_ref,
+                "identity": identity,
+                "name": user_name,
+                "metadata": participant.get("metadata") or "",
+            }
+            try:
+                update = requests.post(
+                    f"{base}/twirp/livekit.RoomService/UpdateParticipant",
+                    json=payload,
+                    headers=headers,
+                    timeout=10,
+                )
+            except requests.RequestException as exc:
+                raise VideoProviderError(
+                    f"update participant transport error: {exc}"
+                ) from exc
+            if update.status_code != 200:
+                # The person hung up between the two calls ("participant does
+                # not exist", twirp not_found). A race we lose harmlessly:
+                # they carry the new name on their next join.
+                if update.status_code == 404:
+                    continue
+                raise VideoProviderError(
+                    f"update participant failed: {update.status_code} "
+                    f"{update.text[:300]}"
+                )
+            renamed += 1
+        return renamed
+
     # ── Recording egress ───────────────────────────────────────────────
 
     def _http_url(self) -> str:
         url = self._conf().LIVEKIT_URL or ""
         return url.replace("ws://", "http://").replace("wss://", "https://")
+
+    def _room_admin_headers(self, provider_room_ref: str) -> dict:
+        """Auth for the RoomService twirp API, scoped to ONE room.
+
+        LiveKit's admin check is ``room_admin AND grant.room == <the room in
+        the request>`` — a grant without the room name is refused, so the ref
+        is a required argument rather than a convenience.
+        """
+        api = _require_sdk()
+        conf = self._conf()
+        token = api.AccessToken(
+            api_key=conf.LIVEKIT_API_KEY,
+            api_secret=conf.LIVEKIT_API_SECRET,
+        ).with_grants(api.VideoGrants(room_admin=True, room=provider_room_ref))
+        return {
+            "Authorization": f"Bearer {token.to_jwt()}",
+            "Content-Type": "application/json",
+        }
 
     def _egress_headers(self) -> dict:
         api = _require_sdk()

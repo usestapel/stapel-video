@@ -11,12 +11,20 @@ from stapel_video.providers.base import VideoProvider, VideoProviderError
 
 class FakeProvider(VideoProvider):
     _egress_seq = 0
+    #: Every ``rename_participant`` call, as (room_ref, user_id, name) — the
+    #: class holds it so a test can read it without owning the instance
+    #: ``get_video_provider()`` built.
+    renames: list = []
 
     def create_room(self, join_code: str, *, scope_key: str = "") -> str:
         return f"fake-room::{join_code}"
 
     def mint_join_token(self, provider_room_ref, user_id, user_name) -> str:
         return f"faketoken::{provider_room_ref}::{user_id}"
+
+    def rename_participant(self, provider_room_ref, user_id, user_name) -> int:
+        FakeProvider.renames.append((provider_room_ref, str(user_id), user_name))
+        return 1
 
     def start_room_egress(self, provider_room_ref: str, storage_key: str) -> str:
         FakeProvider._egress_seq += 1

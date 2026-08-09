@@ -38,10 +38,13 @@ class _FakeAccessToken:
 
 
 class _FakeGrants:
-    def __init__(self, room_join=False, room=None, room_record=False):
+    def __init__(
+        self, room_join=False, room=None, room_record=False, room_admin=False
+    ):
         self.room_join = room_join
         self.room = room
         self.room_record = room_record
+        self.room_admin = room_admin
 
 
 class _FakeEvent:
@@ -98,9 +101,15 @@ class _FakeRequests:
     def __init__(self):
         self.calls = []
         self.next_resp = _FakeResp(payload={"egress_id": "eg_1"})
+        # Multi-call flows (rename = ListParticipants then N UpdateParticipant)
+        # queue their responses; an empty queue falls back to next_resp so the
+        # single-call egress tests keep their original shape.
+        self.queue = []
 
     def post(self, url, json=None, headers=None, timeout=None):
         self.calls.append({"url": url, "json": json, "headers": headers})
+        if self.queue:
+            return self.queue.pop(0)
         return self.next_resp
 
 
@@ -172,3 +181,88 @@ def test_parse_webhook_normalizes_egress_event(livekit_provider):
 def test_parse_webhook_rejects_bad_signature(livekit_provider):
     with pytest.raises(VideoProviderError):
         livekit_provider.parse_webhook(b"{}", "bad")
+
+
+# ── rename_participant (mid-call name propagation) ──────────────────────────
+
+
+def _roster(*participants):
+    """Queue a ListParticipants response carrying *participants*."""
+    return _FakeResp(payload={"participants": list(participants)})
+
+
+def test_rename_participant_updates_every_connection_of_that_user(livekit_provider):
+    # Same person on two devices = two identities sharing the user-id prefix;
+    # a third participant is somebody else and must not be touched.
+    livekit_provider._fake_requests.queue = [
+        _roster(
+            {"identity": "42_aaaa", "name": "Old", "metadata": '{"avatar":"a.png"}'},
+            {"identity": "42_bbbb", "name": "Old", "metadata": ""},
+            {"identity": "99_cccc", "name": "Someone", "metadata": ""},
+        ),
+        _FakeResp(status_code=200),
+        _FakeResp(status_code=200),
+    ]
+    renamed = livekit_provider.rename_participant("abc-defg-hij", 42, "New Name")
+    assert renamed == 2
+
+    calls = livekit_provider._fake_requests.calls
+    assert calls[0]["url"].endswith("/twirp/livekit.RoomService/ListParticipants")
+    updates = [c for c in calls if c["url"].endswith("UpdateParticipant")]
+    assert [u["json"]["identity"] for u in updates] == ["42_aaaa", "42_bbbb"]
+    assert {u["json"]["name"] for u in updates} == {"New Name"}
+    # Metadata is echoed back, not dropped — UpdateParticipant overwrites it.
+    assert updates[0]["json"]["metadata"] == '{"avatar":"a.png"}'
+
+
+def test_rename_participant_scopes_the_admin_grant_to_the_room(livekit_provider):
+    livekit_provider._fake_requests.queue = [_roster()]
+    livekit_provider.rename_participant("abc-defg-hij", 42, "New Name")
+    # LiveKit refuses room_admin that is not scoped to the room in the request.
+    assert livekit_provider._fake_requests.calls[0]["headers"]["Authorization"].endswith(
+        "::abc-defg-hij"
+    )
+
+
+def test_rename_participant_is_idempotent_on_redelivery(livekit_provider):
+    # At-least-once delivery: a connection already carrying the name is skipped.
+    livekit_provider._fake_requests.queue = [
+        _roster({"identity": "42_aaaa", "name": "New Name", "metadata": ""})
+    ]
+    assert livekit_provider.rename_participant("abc-defg-hij", 42, "New Name") == 0
+    assert len(livekit_provider._fake_requests.calls) == 1
+
+
+def test_rename_participant_treats_an_unknown_room_as_nobody_to_rename(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _FakeResp(status_code=404, text="requested room does not exist")
+    ]
+    assert livekit_provider.rename_participant("gone-room", 42, "New Name") == 0
+
+
+def test_rename_participant_raises_on_a_real_list_failure(livekit_provider):
+    livekit_provider._fake_requests.queue = [_FakeResp(status_code=500, text="boom")]
+    with pytest.raises(VideoProviderError):
+        livekit_provider.rename_participant("abc-defg-hij", 42, "New Name")
+
+
+def test_rename_participant_tolerates_a_participant_leaving_mid_flight(livekit_provider):
+    # Lost race: they hung up between the list and the update. They will carry
+    # the new name on their next join anyway.
+    livekit_provider._fake_requests.queue = [
+        _roster(
+            {"identity": "42_aaaa", "name": "Old", "metadata": ""},
+            {"identity": "42_bbbb", "name": "Old", "metadata": ""},
+        ),
+        _FakeResp(status_code=404, text="participant does not exist"),
+        _FakeResp(status_code=200),
+    ]
+    assert livekit_provider.rename_participant("abc-defg-hij", 42, "New Name") == 1
+
+
+def test_rename_participant_does_not_match_a_merely_prefixed_user_id(livekit_provider):
+    # Bare startswith(user_id) would match user 4 against user 42's connection.
+    livekit_provider._fake_requests.queue = [
+        _roster({"identity": "42_aaaa", "name": "Old", "metadata": ""})
+    ]
+    assert livekit_provider.rename_participant("abc-defg-hij", 4, "New Name") == 0

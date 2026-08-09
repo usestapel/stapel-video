@@ -33,7 +33,10 @@
 - **API** — room create/info/join, participants (anchor-paginated), lobby
   admit/deny (host-only), and a signed provider webhook ingress. DTO/serializer
   seams + OpenAPI (drf-spectacular).
-- **comm surface** — emits `video.egress_ended`; consumes `user.deleted` (GDPR).
+- **comm surface** — emits `video.egress_ended`; consumes `user.deleted` (GDPR)
+  and `profile.changed` (pushes a renamed person's new name onto the
+  connections they already hold — the name is a claim frozen inside the join
+  token, so a rename otherwise reaches a live call only on reconnect).
 
 ## Extension points (fork-free)
 

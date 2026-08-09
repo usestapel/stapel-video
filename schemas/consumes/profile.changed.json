@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "profile.changed",
+  "description": "A user's canonical profile changed. stapel-video pushes the new display_name onto that user's live provider connections, because the name is a claim frozen inside the join token and cannot otherwise reach a call already in progress.",
+  "type": "object",
+  "required": ["user_id"],
+  "properties": {
+    "user_id":        { "type": "string", "format": "uuid" },
+    "display_name":   { "type": "string" },
+    "avatar":         { "type": "string" },
+    "correlation_id": { "type": "string", "format": "uuid" }
+  },
+  "additionalProperties": true
+}

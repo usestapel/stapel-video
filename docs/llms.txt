@@ -1,4 +1,4 @@
-# stapel-video 0.2.5
+# stapel-video 0.3.0
 
 Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.
 
@@ -59,7 +59,8 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 
 ## Fits with — fleet dependencies
 - stapel-auth (optional) — every endpoint but the provider webhook requires an authenticated user (IsAuthenticated); stapel-auth is the shelf's session issuer — any stapel-core-compatible JWT issuer satisfies the check
-- stapel-core (required) — comm bus (video.egress_ended emit, user.deleted consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination
+- stapel-core (required) — comm bus (video.egress_ended emit; user.deleted and profile.changed consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination
+- stapel-profiles (optional) — publishes profile.changed, which video consumes to carry a renamed person's new name onto the connections they already hold — the display name is a claim frozen inside the join token, so without that event a rename reaches a live call only when the person happens to reconnect
 - stapel-recordings (optional) — subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber
 
 ## HTTP operations (7) — call by operationId, never by a typed path
