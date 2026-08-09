@@ -4,6 +4,59 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-08-09
+
+The seam a product can adopt without forking the provider, and the reload ghost
+nobody ever catches in the act.
+
+0.3.0 made a rename reach a live call — but only for a host that runs *this
+module's* rooms, because the subscriber read this module's tables directly. A
+product with its own meeting model (invitations, pin codes, calendar series)
+could buy the capability and not the calling of it, which is the defect class
+this whole path exists to close.
+
+- **`LIVE_ROOMS_PROVIDER`** — new seam (`live_rooms.py`), same §8.1 dotted-path
+  shape as `VIDEO_PROVIDER`/`SCOPE_PROVIDER`. Exactly one method,
+  `live_rooms_for_user(user_id) -> [provider_room_ref]`; the default reads this
+  module's own tables. `actions.handle_profile_changed` queries the seam
+  instead of importing the models, so a host with its own rooms writes a
+  ~20-line adapter and gets the rename.
+- **`stapel_video.E008`** — the seam's own failure mode, closed at boot. If
+  `stapel_video` is installed, the seam is at its default, and this module's
+  URLs are not mounted, then nothing in that deployment can ever write what the
+  default reads: the subscriber answers "no live rooms" for everybody, forever.
+  Empty-because-unconfigured is indistinguishable from
+  empty-because-nobody-is-on-a-call, so this is a measurement of the wiring,
+  not a name check — a hard system-check error naming both remedies. A
+  correctly adapted host passes without knowing it exists.
+- **Stable connection identity** — `mint_join_token` takes an optional
+  `client_session_id`, and the join/create endpoints, their request DTOs and
+  serializers carry it end to end. Random-per-connection identity is not
+  cosmetic drift: every page reload arrives at the vendor as a stranger, so the
+  pre-reload connection sits there as a ghost tile until the vendor's own
+  disconnect timeout — for every adopter, on every reload. Reconnecting under
+  the same identity makes LiveKit evict the stale connection on sight. Callers
+  that send nothing keep the random suffix, so two real devices still get two
+  identities.
+- **`mint_join_token` takes `user_avatar`** and the LiveKit provider always
+  writes participant metadata as JSON, even when the avatar is empty — never
+  "sometimes absent". `rename_participant` already echoed metadata back so a
+  rename could not erase an avatar; until now nothing could set one.
+- **`remove_participant`** on the contract — the kick counterpart of
+  `rename_participant`, same ListParticipants + per-identity shape, and both
+  now share one matcher (`{user_id}_` prefix, separator included, both identity
+  forms). A rename that finds a connection a kick does not is a defect waiting
+  to be read side by side.
+- **`get_room_metadata` / `update_room_metadata` / `probe_reachable`** on the
+  contract, implemented for LiveKit. Every provider capability a product
+  actually uses now has an upstream home — which is what makes the fleet ban on
+  direct `livekit` imports outside `stapel_video` (SWAP004, `stapel-swap-lint`)
+  enforceable rather than aspirational.
+
+Compatibility: `VideoProvider` subclasses outside this repo must widen
+`mint_join_token` with the two new optional parameters. Everything else is
+additive.
+
 ## [0.3.0] — 2026-08-09
 
 A rename now reaches a call that is already running.

@@ -57,8 +57,14 @@ class LiveKitProvider(VideoProvider):
         return join_code
 
     def mint_join_token(
-        self, provider_room_ref: str, user_id, user_name: str
+        self,
+        provider_room_ref: str,
+        user_id,
+        user_name: str,
+        user_avatar: str = "",
+        client_session_id: str | None = None,
     ) -> str:
+        import json
         import uuid
 
         api = _require_sdk()
@@ -67,14 +73,29 @@ class LiveKitProvider(VideoProvider):
             api_key=conf.LIVEKIT_API_KEY,
             api_secret=conf.LIVEKIT_API_SECRET,
         )
-        # Unique identity per connection to allow multi-device joins.
-        identity = f"{user_id}_{uuid.uuid4().hex[:8]}"
+        # Stable identity across a reload when the caller supplies a
+        # client_session_id (a per-browser mark the frontend keeps). LiveKit
+        # evicts the OLD connection the instant a new one connects under the
+        # same identity, so a reload kills its own pre-reload ghost tile
+        # immediately instead of leaving it to rot on LiveKit's disconnect
+        # timeout. No session id (older clients, server-side mints for
+        # somebody else) falls back to the random suffix, so two real devices
+        # under one user id still get distinct identities.
+        if client_session_id:
+            identity = f"{user_id}_{client_session_id}"
+        else:
+            identity = f"{user_id}_{uuid.uuid4().hex[:8]}"
         token = (
             token.with_identity(identity)
             .with_name(user_name)
             .with_ttl(_timedelta_seconds(conf.JOIN_TOKEN_TTL_SECONDS))
             .with_grants(api.VideoGrants(room_join=True, room=provider_room_ref))
         )
+        # ALWAYS set metadata, even with an empty avatar, so every client in
+        # the room parses one consistent JSON shape instead of branching on
+        # metadata being "sometimes absent". This is also the field
+        # rename_participant echoes back untouched.
+        token = token.with_metadata(json.dumps({"avatar": user_avatar or ""}))
         return token.to_jwt()
 
     def rename_participant(
@@ -88,10 +109,11 @@ class LiveKitProvider(VideoProvider):
         ``UpdateParticipant`` each. Every LiveKit client in the room gets a
         ``ParticipantNameChanged`` event and re-renders, with no rejoin.
 
-        Matching is on the ``{user_id}_`` PREFIX, deliberately: the suffix is
-        per-connection, so one person on a laptop and a phone is two live
-        identities and both must move. The separator is included in the
-        prefix so one user id can never match another's — bare
+        Matching is :func:`_mine` — the ``{user_id}_`` PREFIX, separator
+        included — so both identity forms this class mints (the deterministic
+        ``{user_id}_{client_session_id}`` and the random-suffix fallback) are
+        found, one person on a laptop and a phone moves as two connections,
+        and one user id can never match another's. Bare
         ``startswith(user_id)`` would be a correctness bug the day ids stop
         being fixed-width UUIDs.
 
@@ -102,36 +124,14 @@ class LiveKitProvider(VideoProvider):
         breaks a neighbouring field is not a repair.
         """
         requests = _require_requests()
-        prefix = f"{user_id}_"
         base = self._http_url()
         headers = self._room_admin_headers(provider_room_ref)
-        try:
-            resp = requests.post(
-                f"{base}/twirp/livekit.RoomService/ListParticipants",
-                json={"room": provider_room_ref},
-                headers=headers,
-                timeout=10,
-            )
-        except requests.RequestException as exc:
-            raise VideoProviderError(f"list participants transport error: {exc}") from exc
-        if resp.status_code != 200:
-            # LiveKit creates rooms lazily, so a room nobody is in does not
-            # exist and answers twirp `not_found` (HTTP 404) with the message
-            # "requested room does not exist". "Nobody to rename" is the
-            # honest reading of that, not a failure. Keyed on the STATUS, not
-            # the prose: the message carries no substring worth matching, and
-            # the code is the part of the contract that holds still.
-            if resp.status_code == 404:
-                return 0
-            raise VideoProviderError(
-                f"list participants failed: {resp.status_code} {resp.text[:300]}"
-            )
-        participants = resp.json().get("participants") or []
+        participants = self._list_participants(provider_room_ref)
+        if participants is None:
+            return 0
         renamed = 0
-        for participant in participants:
+        for participant in _mine(participants, user_id):
             identity = participant.get("identity") or ""
-            if not identity.startswith(prefix):
-                continue
             if (participant.get("name") or "") == user_name:
                 continue  # already correct — at-least-once delivery, stay idempotent
             payload = {
@@ -164,6 +164,160 @@ class LiveKitProvider(VideoProvider):
             renamed += 1
         return renamed
 
+    def remove_participant(self, provider_room_ref: str, user_id) -> int:
+        """Disconnect every live connection ``user_id`` holds in this room.
+
+        The same two-call, per-identity shape as
+        :meth:`rename_participant` — ``ListParticipants`` then one
+        ``RemoveParticipant`` per matched identity — for the same reason:
+        one person is N connections, and removing one of them is not a kick.
+        Returns how many were disconnected.
+        """
+        requests = _require_requests()
+        base = self._http_url()
+        headers = self._room_admin_headers(provider_room_ref)
+        participants = self._list_participants(provider_room_ref)
+        if participants is None:
+            return 0
+        removed = 0
+        for participant in _mine(participants, user_id):
+            try:
+                resp = requests.post(
+                    f"{base}/twirp/livekit.RoomService/RemoveParticipant",
+                    json={
+                        "room": provider_room_ref,
+                        "identity": participant.get("identity") or "",
+                    },
+                    headers=headers,
+                    timeout=10,
+                )
+            except requests.RequestException as exc:
+                raise VideoProviderError(
+                    f"remove participant transport error: {exc}"
+                ) from exc
+            if resp.status_code != 200:
+                # They hung up between the two calls — the goal (that
+                # connection is gone) is met either way.
+                if resp.status_code == 404:
+                    continue
+                raise VideoProviderError(
+                    f"remove participant failed: {resp.status_code} "
+                    f"{resp.text[:300]}"
+                )
+            removed += 1
+        return removed
+
+    def _list_participants(self, provider_room_ref: str):
+        """``ListParticipants`` for a room, or None when the room is not live.
+
+        LiveKit creates rooms lazily, so a room nobody is in does not exist
+        and answers twirp ``not_found`` (HTTP 404). "Nobody in there" is the
+        honest reading of that, not a failure — and it is the answer both
+        callers want. Keyed on the STATUS, not the prose: the message carries
+        no substring worth matching, and the code is the part of the contract
+        that holds still.
+        """
+        requests = _require_requests()
+        try:
+            resp = requests.post(
+                f"{self._http_url()}/twirp/livekit.RoomService/ListParticipants",
+                json={"room": provider_room_ref},
+                headers=self._room_admin_headers(provider_room_ref),
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise VideoProviderError(
+                f"list participants transport error: {exc}"
+            ) from exc
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            raise VideoProviderError(
+                f"list participants failed: {resp.status_code} {resp.text[:300]}"
+            )
+        return resp.json().get("participants") or []
+
+    # ── Room metadata ──────────────────────────────────────────────────
+
+    def get_room_metadata(self, provider_room_ref: str) -> dict:
+        requests = _require_requests()
+        try:
+            resp = requests.post(
+                f"{self._http_url()}/twirp/livekit.RoomService/ListRooms",
+                json={"names": [provider_room_ref]},
+                headers=self._room_admin_headers(provider_room_ref),
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise VideoProviderError(f"list rooms transport error: {exc}") from exc
+        if resp.status_code != 200:
+            raise VideoProviderError(
+                f"list rooms failed: {resp.status_code} {resp.text[:300]}"
+            )
+        try:
+            rooms = resp.json().get("rooms") or []
+        except ValueError as exc:
+            raise VideoProviderError(f"list rooms returned non-JSON: {exc}") from exc
+        if not rooms:
+            # A room nobody is in has not been materialized — no metadata,
+            # which is what an empty dict says.
+            return {}
+        import json
+
+        raw = rooms[0].get("metadata") or ""
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            raise VideoProviderError(f"room metadata is not JSON: {exc}") from exc
+        return parsed if isinstance(parsed, dict) else {}
+
+    def update_room_metadata(self, provider_room_ref: str, metadata: dict) -> bool:
+        import json
+
+        requests = _require_requests()
+        try:
+            resp = requests.post(
+                f"{self._http_url()}/twirp/livekit.RoomService/UpdateRoomMetadata",
+                json={
+                    "room": provider_room_ref,
+                    "metadata": json.dumps(metadata or {}),
+                },
+                headers=self._room_admin_headers(provider_room_ref),
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise VideoProviderError(
+                f"update room metadata transport error: {exc}"
+            ) from exc
+        if resp.status_code != 200:
+            raise VideoProviderError(
+                f"update room metadata failed: {resp.status_code} "
+                f"{resp.text[:300]}"
+            )
+        return True
+
+    # ── Health ─────────────────────────────────────────────────────────
+
+    def probe_reachable(self) -> bool:
+        """``ListRooms`` with an empty filter — the cheapest call that
+        exercises the exact path the real ones use (credentials, headers,
+        network) without touching any room's state. Never raises."""
+        try:
+            requests = _require_requests()
+            resp = requests.post(
+                f"{self._http_url()}/twirp/livekit.RoomService/ListRooms",
+                json={"names": []},
+                headers=self._room_admin_headers("__stapel_video_health_probe__"),
+                timeout=3,
+            )
+            return resp.status_code == 200
+        except Exception:
+            # A health probe that can itself fail the health endpoint is not a
+            # probe. Unreachable, misconfigured and SDK-less all read "no".
+            return False
+
     # ── Recording egress ───────────────────────────────────────────────
 
     def _http_url(self) -> str:
@@ -175,14 +329,20 @@ class LiveKitProvider(VideoProvider):
 
         LiveKit's admin check is ``room_admin AND grant.room == <the room in
         the request>`` — a grant without the room name is refused, so the ref
-        is a required argument rather than a convenience.
+        is a required argument rather than a convenience. ``room_list`` rides
+        along because ``ListRooms`` (the metadata read and the health probe)
+        is gated on that grant, not on ``room_admin``.
         """
         api = _require_sdk()
         conf = self._conf()
         token = api.AccessToken(
             api_key=conf.LIVEKIT_API_KEY,
             api_secret=conf.LIVEKIT_API_SECRET,
-        ).with_grants(api.VideoGrants(room_admin=True, room=provider_room_ref))
+        ).with_grants(
+            api.VideoGrants(
+                room_admin=True, room_list=True, room=provider_room_ref
+            )
+        )
         return {
             "Authorization": f"Bearer {token.to_jwt()}",
             "Content-Type": "application/json",
@@ -284,6 +444,26 @@ class LiveKitProvider(VideoProvider):
             "status": _egress_status_name(info) if egress_id else None,
             "storage_key": storage_key,
         }
+
+
+def _mine(participants, user_id) -> list:
+    """The listed participants that are live connections of ``user_id``.
+
+    One matcher for every per-connection operation (rename, remove), because
+    they must agree: a rename that finds a connection a kick does not is a
+    defect waiting for the day the two are read side by side. The separator is
+    part of the prefix so ``user 1`` never matches ``user 12``; the bare
+    equality arm covers identities minted before the ``{user_id}_{suffix}``
+    convention existed.
+    """
+    user_id = str(user_id)
+    prefix = f"{user_id}_"
+    return [
+        p
+        for p in participants
+        if (identity := (p.get("identity") or ""))
+        and (identity == user_id or identity.startswith(prefix))
+    ]
 
 
 def _timedelta_seconds(seconds):

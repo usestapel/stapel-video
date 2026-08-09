@@ -15,16 +15,51 @@ class FakeProvider(VideoProvider):
     #: class holds it so a test can read it without owning the instance
     #: ``get_video_provider()`` built.
     renames: list = []
+    #: Every ``mint_join_token`` call, as (room_ref, user_id, name, avatar,
+    #: client_session_id). Same class-level trick as ``renames``.
+    mints: list = []
+    #: Every ``remove_participant`` call, as (room_ref, user_id).
+    removals: list = []
+    #: room_ref -> metadata dict, for the metadata pair.
+    metadata: dict = {}
 
     def create_room(self, join_code: str, *, scope_key: str = "") -> str:
         return f"fake-room::{join_code}"
 
-    def mint_join_token(self, provider_room_ref, user_id, user_name) -> str:
-        return f"faketoken::{provider_room_ref}::{user_id}"
+    def mint_join_token(
+        self,
+        provider_room_ref,
+        user_id,
+        user_name,
+        user_avatar: str = "",
+        client_session_id=None,
+    ) -> str:
+        FakeProvider.mints.append(
+            (provider_room_ref, str(user_id), user_name, user_avatar,
+             client_session_id)
+        )
+        identity = (
+            f"{user_id}_{client_session_id}" if client_session_id else f"{user_id}_rnd"
+        )
+        return f"faketoken::{provider_room_ref}::{identity}"
 
     def rename_participant(self, provider_room_ref, user_id, user_name) -> int:
         FakeProvider.renames.append((provider_room_ref, str(user_id), user_name))
         return 1
+
+    def remove_participant(self, provider_room_ref, user_id) -> int:
+        FakeProvider.removals.append((provider_room_ref, str(user_id)))
+        return 1
+
+    def get_room_metadata(self, provider_room_ref) -> dict:
+        return dict(FakeProvider.metadata.get(provider_room_ref, {}))
+
+    def update_room_metadata(self, provider_room_ref, metadata: dict) -> bool:
+        FakeProvider.metadata[provider_room_ref] = dict(metadata or {})
+        return True
+
+    def probe_reachable(self) -> bool:
+        return True
 
     def start_room_egress(self, provider_room_ref: str, storage_key: str) -> str:
         FakeProvider._egress_seq += 1

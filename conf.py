@@ -19,6 +19,11 @@ The extension seams (see MODULE.md):
   answers "is this user a trusted member of the scope?" (the ``scope_trusted``
   auto-admit decision). Default is a single global scope where every
   authenticated user is a member.
+- ``LIVE_ROOMS_PROVIDER`` — answers "which calls is this user in right now?"
+  for the ``profile.changed`` subscriber. Default reads this module's own
+  tables; a host that adopted the provider seam but kept its own Room model
+  points this at a ~20-line adapter over the tables it actually writes.
+  ``checks.py`` refuses to boot a deployment where the default cannot hold.
 
 Two more **config axes** (capability-config.md §16) set room defaults at
 creation time when the client does not specify them:
@@ -46,6 +51,14 @@ DEFAULTS = {
     # The default is a single global scope (every authenticated user is a
     # member); a host may return e.g. workspace_id and real membership.
     "SCOPE_PROVIDER": "stapel_video.scope.DefaultScopeProvider",
+    # Dotted path to a LiveRoomsProvider — "which calls is this user in right
+    # now", the one lookup the profile.changed subscriber needs. The default
+    # reads this module's own Room/RoomParticipant tables, which is right only
+    # for a host that mounts this module's URL surface (its join endpoint is
+    # what writes those rows). A host running its own rooms over the
+    # VIDEO_PROVIDER seam points this at its own adapter — and is made to,
+    # by a system check, rather than discovering it from a stale tile.
+    "LIVE_ROOMS_PROVIDER": "stapel_video.live_rooms.DefaultLiveRoomsProvider",
     # Default access level for a room created without an explicit one. Axis
     # (capability-config.md §16): public (anyone with the code joins
     # instantly), scope_trusted (scope members auto-admit, others wait),
@@ -71,7 +84,7 @@ DEFAULTS = {
 video_settings = AppSettings(
     "STAPEL_VIDEO",
     defaults=DEFAULTS,
-    import_strings=("VIDEO_PROVIDER", "SCOPE_PROVIDER"),
+    import_strings=("VIDEO_PROVIDER", "SCOPE_PROVIDER", "LIVE_ROOMS_PROVIDER"),
 )
 
 __all__ = ["video_settings", "DEFAULTS"]

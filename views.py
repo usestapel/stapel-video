@@ -33,6 +33,7 @@ from .providers import VideoProviderError
 from .scope import get_scope_provider
 from .serializers import (
     AdmitResponseSerializer,
+    JoinRequestSerializer,
     JoinResponseSerializer,
     LobbyActionRequestSerializer,
     ParticipantListResponseSerializer,
@@ -123,7 +124,7 @@ class RoomListCreateView(SerializerSeamMixin, APIView):
             admit_required=data.admit_required,
         )
         host = room.participants.get(role=ParticipantRole.HOST)
-        token = services._mint_token(room, request.user)
+        token = services._mint_token(room, request.user, data.client_session_id)
         response_cls = self.get_response_serializer_class()
         return StapelResponse(
             response_cls(
@@ -160,14 +161,21 @@ class RoomJoinView(SerializerSeamMixin, APIView):
     waiting / denied."""
 
     permission_classes = [permissions.IsAuthenticated]
+    request_serializer_class = JoinRequestSerializer
     response_serializer_class = JoinResponseSerializer
 
-    @extend_schema(request=None, responses={200: JoinResponseSerializer})
+    @extend_schema(
+        request=JoinRequestSerializer, responses={200: JoinResponseSerializer}
+    )
     def post(self, request, join_code):  # noqa: R007
         room = services.get_room(join_code)
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
-        result = services.join_room(request.user, room, request)
+        ser = self.get_request_serializer_class()(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        result = services.join_room(
+            request.user, room, request, ser.validated_data.client_session_id
+        )
         if result["status"] == "denied":
             return StapelErrorResponse(403, ERR_403_JOIN_DENIED)
         response_cls = self.get_response_serializer_class()

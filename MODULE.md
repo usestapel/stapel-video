@@ -43,9 +43,22 @@
 ### 1. Video backend — `VIDEO_PROVIDER` (dotted path, replace)
 
 A `VideoProvider` (ABC, `providers/base.py`) is the one seam a video vendor
-plugs into: `create_room` / `mint_join_token` (mandatory core) and
-`start_room_egress` / `stop_room_egress` / `parse_webhook` (recording, default
-`NotImplementedError` so a token-only backend stays valid). The default is
+plugs into: `create_room` / `mint_join_token` (mandatory core), the
+live-connection pair `rename_participant` / `remove_participant`, the room
+metadata pair `get_room_metadata` / `update_room_metadata`, the health probe
+`probe_reachable`, and `start_room_egress` / `stop_room_egress` /
+`parse_webhook` (recording). Everything but the core defaults to
+`NotImplementedError`, so a token-only backend stays valid.
+
+The optional half is not decoration: every one of those methods addresses a
+LIVE connection or the running media room, and only the provider can, because
+it invented the identity convention in `mint_join_token`. A capability missing
+from this contract is a capability the product reaches the vendor SDK for
+directly — which is how a provider layer gets forked. Direct `livekit` imports
+outside `stapel_video` are a fleet lint error (SWAP004, `stapel-swap-lint`),
+so a new vendor call lands here and every consumer gets it.
+
+The default is
 `LiveKitProvider` behind the `[livekit]` extra — its SDK is imported *lazily*
 inside each method, so the default dotted path resolves on a plain install and
 only calling a method without the extra raises. Resolve with
@@ -60,7 +73,30 @@ the one question `scope_trusted` needs — *is this user a trusted member?* The
 default is a single global scope where every authenticated user is a member; a
 host returns e.g. the active `workspace_id` and real membership.
 
-### 3. Recording hook — `video.egress_ended` (comm emit)
+### 3. Live rooms — `LIVE_ROOMS_PROVIDER` (dotted path, replace)
+
+A `LiveRoomsProvider` (`live_rooms.py`) answers the single question the
+`profile.changed` subscriber needs: **`live_rooms_for_user(user_id) -> list of
+provider_room_ref`**. One method, deliberately — a second one turns the seam
+into a shadow repository over Room/Participant, a fourth abstraction every
+host has to implement in full to get one subscriber working. A second
+subscriber earns a second method when it exists.
+
+The default reads this module's own tables (admitted, not-left participants),
+which is right for a host that mounts this module's URL surface — its join
+endpoint is what writes those rows. A host that adopted `VIDEO_PROVIDER` and
+kept its own Room model writes a ~20-line adapter and points the path at it.
+
+**That default is guarded, not documented.** A deployment where `stapel_video`
+is installed, the seam is at its default, and this module's URLs are not
+mounted has nothing that can ever write what the default reads: the subscriber
+answers "no live rooms" forever and a rename silently never reaches a call.
+Empty-because-unconfigured is indistinguishable from empty-because-nobody-is-
+on-a-call, so it is closed as a measurement — `stapel_video.E008`, a hard
+system-check error naming both remedies. A correctly adapted host passes
+without knowing it exists.
+
+### 4. Recording hook — `video.egress_ended` (comm emit)
 
 When a room recording finishes, the webhook path emits `video.egress_ended`
 (`{egress_id, status, storage_key}`); stapel-recordings (or any subscriber)
@@ -76,6 +112,7 @@ environment variable -> default. Read lazily at call time.
 |---|---|---|
 | `VIDEO_PROVIDER` | `…livekit.LiveKitProvider` | **axis** + seam (dotted path) |
 | `SCOPE_PROVIDER` | `…scope.DefaultScopeProvider` | seam (dotted path) |
+| `LIVE_ROOMS_PROVIDER` | `…live_rooms.DefaultLiveRoomsProvider` | seam (dotted path), guarded by E008 |
 | `DEFAULT_ACCESS_LEVEL` | `restricted` | **axis** (public\|scope_trusted\|restricted) |
 | `DEFAULT_ADMIT_REQUIRED` | `True` | **axis** (bool) |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `""` | tuning (default provider) |

@@ -88,10 +88,31 @@ class RoomCreateRequest:
             configured DEFAULT_ACCESS_LEVEL axis default.
         admit_required: Whether the lobby starts on. Omit for the configured
             DEFAULT_ADMIT_REQUIRED axis default.
+        client_session_id: Stable per-browser mark — see JoinRequest.
     """
 
     access_level: Optional[str] = None
     admit_required: Optional[bool] = None
+    client_session_id: Optional[str] = None
+
+
+@dataclass
+class JoinRequest:
+    """Join a room.
+
+    Attributes:
+        client_session_id: A stable per-browser id the client keeps across
+            reloads (and only across reloads — a genuinely new tab or device
+            should send a different one). The provider folds it into the
+            connection identity so a reconnect after a reload lands under the
+            SAME identity and the vendor evicts the pre-reload connection on
+            sight, instead of leaving a ghost tile until its disconnect
+            timeout. Omit it and the identity is random per connection, which
+            is the pre-0.4.0 behavior: correct, and quietly leaving one ghost
+            per reload per viewer.
+    """
+
+    client_session_id: Optional[str] = None
 
 
 @dataclass

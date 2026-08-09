@@ -45,6 +45,12 @@ def handle_profile_changed(event):
     to know about: no product code, no ordering rule between two libraries,
     nothing to forget.
 
+    "Which calls is this person in" goes through the ``LIVE_ROOMS_PROVIDER``
+    seam rather than this module's models: a host can adopt the provider and
+    keep its own rooms, and the subscriber has to work for it too — otherwise
+    the capability is bought and the *calling* of it is left as a prose
+    obligation, which is the defect class this whole path exists to close.
+
     Idempotent (at-least-once delivery): the provider skips connections that
     already carry the name, and a person in no live room is zero work.
     """
@@ -54,28 +60,18 @@ def handle_profile_changed(event):
         return
     display_name = event.payload.get("display_name") or ""
 
-    from .models import ParticipantStatus, Room
+    from .live_rooms import get_live_rooms_provider
     from .providers import get_video_provider
 
-    rooms = list(
-        Room.objects.filter(
-            participants__user_id=user_id,
-            participants__status=ParticipantStatus.ADMITTED,
-            participants__left_at__isnull=True,
-        )
-        .exclude(provider_room_ref="")
-        .distinct()
-    )
-    if not rooms:
+    room_refs = [ref for ref in get_live_rooms_provider().live_rooms_for_user(user_id) if ref]
+    if not room_refs:
         return
 
     provider = get_video_provider()
     renamed = 0
-    for room in rooms:
+    for room_ref in room_refs:
         try:
-            renamed += provider.rename_participant(
-                room.provider_room_ref, user_id, display_name
-            )
+            renamed += provider.rename_participant(room_ref, user_id, display_name)
         except NotImplementedError:
             # A token-only provider cannot push a rename. Say it once, at
             # warning, rather than leaving the operator to discover it from a
@@ -91,9 +87,7 @@ def handle_profile_changed(event):
             # One unreachable room must not strand the others, and must not
             # fail the profile write that triggered us: the name is already
             # canonical, this is a projection catching up.
-            logger.exception(
-                "failed to push the new name into room %s", room.provider_room_ref
-            )
+            logger.exception("failed to push the new name into room %s", room_ref)
     if renamed:
         logger.info(
             "pushed the new display name onto %d live connection(s) of user %s",

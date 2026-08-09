@@ -103,6 +103,25 @@
         "tags": [
           "Video"
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequest"
+              }
+            }
+          }
+        },
         "security": [
           {
             "JWTCookieAuth": []
@@ -336,6 +355,17 @@
           "token"
         ]
       },
+      "JoinRequest": {
+        "type": "object",
+        "description": "Join a room.",
+        "properties": {
+          "client_session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "A stable per-browser id the client keeps across"
+          }
+        }
+      },
       "JoinResponse": {
         "type": "object",
         "description": "The outcome of a join attempt.",
@@ -467,6 +497,11 @@
             "type": "boolean",
             "nullable": true,
             "description": "Whether the lobby starts on. Omit for the configured"
+          },
+          "client_session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Stable per-browser mark — see JoinRequest"
           }
         }
       },

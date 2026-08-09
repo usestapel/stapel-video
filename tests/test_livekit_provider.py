@@ -16,6 +16,7 @@ class _FakeAccessToken:
         self.identity = None
         self.name = None
         self.grants = None
+        self.metadata = None
 
     def with_identity(self, identity):
         self.identity = identity
@@ -33,18 +34,28 @@ class _FakeAccessToken:
         self.grants = grants
         return self
 
+    def with_metadata(self, metadata):
+        self.metadata = metadata
+        return self
+
     def to_jwt(self):
         return f"jwt::{self.identity}::{getattr(self.grants, 'room', None)}"
 
 
 class _FakeGrants:
     def __init__(
-        self, room_join=False, room=None, room_record=False, room_admin=False
+        self,
+        room_join=False,
+        room=None,
+        room_record=False,
+        room_admin=False,
+        room_list=False,
     ):
         self.room_join = room_join
         self.room = room
         self.room_record = room_record
         self.room_admin = room_admin
+        self.room_list = room_list
 
 
 class _FakeEvent:
@@ -138,6 +149,54 @@ def test_mint_join_token_builds_scoped_token(livekit_provider):
     # Identity is user-id-prefixed + unique suffix; grant is scoped to the room.
     assert token.startswith("jwt::42_")
     assert token.endswith("::abc-defg-hij")
+
+
+# ── identity + metadata (the reload-ghost defect) ───────────────────────────
+
+
+def _minted(provider, *args, **kwargs):
+    """Mint and hand back the fake AccessToken the provider built."""
+    built = []
+    original = _FakeAccessToken.to_jwt
+
+    def _capture(self):
+        built.append(self)
+        return original(self)
+
+    _FakeAccessToken.to_jwt = _capture
+    try:
+        provider.mint_join_token(*args, **kwargs)
+    finally:
+        _FakeAccessToken.to_jwt = original
+    return built[-1]
+
+
+def test_a_client_session_id_makes_the_identity_deterministic(livekit_provider):
+    # The whole point: reconnecting under the SAME identity makes LiveKit
+    # evict the pre-reload connection instead of leaving a ghost tile behind.
+    first = livekit_provider.mint_join_token(
+        "abc-defg-hij", 42, "Alice", "", "sess1234"
+    )
+    second = livekit_provider.mint_join_token(
+        "abc-defg-hij", 42, "Alice", "", "sess1234"
+    )
+    assert first == second == "jwt::42_sess1234::abc-defg-hij"
+
+
+def test_without_a_session_id_two_devices_still_get_two_identities(livekit_provider):
+    first = livekit_provider.mint_join_token("abc-defg-hij", 42, "Alice")
+    second = livekit_provider.mint_join_token("abc-defg-hij", 42, "Alice")
+    assert first != second
+
+
+def test_metadata_is_always_json_even_without_an_avatar(livekit_provider):
+    import json
+
+    with_avatar = _minted(livekit_provider, "r", 42, "Alice", "https://a/x.png")
+    without = _minted(livekit_provider, "r", 42, "Alice")
+    # Never "sometimes absent": every client parses one shape.
+    assert json.loads(with_avatar.metadata) == {"avatar": "https://a/x.png"}
+    assert json.loads(without.metadata) == {"avatar": ""}
 
 
 def test_start_room_egress_posts_composite_request(livekit_provider):
@@ -266,3 +325,98 @@ def test_rename_participant_does_not_match_a_merely_prefixed_user_id(livekit_pro
         _roster({"identity": "42_aaaa", "name": "Old", "metadata": ""})
     ]
     assert livekit_provider.rename_participant("abc-defg-hij", 4, "New Name") == 0
+
+
+# ── remove_participant (the kick counterpart) ───────────────────────────────
+
+
+def test_remove_participant_disconnects_every_connection_of_that_user(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _roster(
+            {"identity": "42_sess1234"},
+            {"identity": "42_bbbb"},
+            {"identity": "99_cccc"},
+        ),
+        _FakeResp(status_code=200),
+        _FakeResp(status_code=200),
+    ]
+    assert livekit_provider.remove_participant("abc-defg-hij", 42) == 2
+    removals = [
+        c for c in livekit_provider._fake_requests.calls
+        if c["url"].endswith("RemoveParticipant")
+    ]
+    # Both identity FORMS match — the deterministic one and the random one.
+    assert [r["json"]["identity"] for r in removals] == ["42_sess1234", "42_bbbb"]
+
+
+def test_remove_participant_does_not_match_a_merely_prefixed_user_id(livekit_provider):
+    livekit_provider._fake_requests.queue = [_roster({"identity": "42_aaaa"})]
+    assert livekit_provider.remove_participant("abc-defg-hij", 4) == 0
+
+
+def test_remove_participant_treats_an_unknown_room_as_nobody_to_kick(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _FakeResp(status_code=404, text="requested room does not exist")
+    ]
+    assert livekit_provider.remove_participant("gone-room", 42) == 0
+
+
+def test_remove_participant_tolerates_a_participant_leaving_mid_flight(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _roster({"identity": "42_aaaa"}, {"identity": "42_bbbb"}),
+        _FakeResp(status_code=404, text="participant does not exist"),
+        _FakeResp(status_code=200),
+    ]
+    assert livekit_provider.remove_participant("abc-defg-hij", 42) == 1
+
+
+def test_remove_participant_raises_on_a_real_failure(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _roster({"identity": "42_aaaa"}),
+        _FakeResp(status_code=500, text="boom"),
+    ]
+    with pytest.raises(VideoProviderError):
+        livekit_provider.remove_participant("abc-defg-hij", 42)
+
+
+# ── room metadata + health probe ────────────────────────────────────────────
+
+
+def test_get_room_metadata_parses_the_blob(livekit_provider):
+    livekit_provider._fake_requests.queue = [
+        _FakeResp(payload={"rooms": [{"metadata": '{"admin_pin": "1234"}'}]})
+    ]
+    assert livekit_provider.get_room_metadata("abc-defg-hij") == {"admin_pin": "1234"}
+    call = livekit_provider._fake_requests.calls[-1]
+    assert call["url"].endswith("/twirp/livekit.RoomService/ListRooms")
+
+
+def test_get_room_metadata_of_a_room_nobody_is_in_is_empty(livekit_provider):
+    # LiveKit materializes a room lazily — an empty list is "not there yet".
+    livekit_provider._fake_requests.queue = [_FakeResp(payload={"rooms": []})]
+    assert livekit_provider.get_room_metadata("abc-defg-hij") == {}
+
+
+def test_update_room_metadata_serializes_the_dict(livekit_provider):
+    livekit_provider._fake_requests.queue = [_FakeResp(status_code=200)]
+    assert livekit_provider.update_room_metadata("abc-defg-hij", {"admin_pin": None})
+    call = livekit_provider._fake_requests.calls[-1]
+    assert call["url"].endswith("/twirp/livekit.RoomService/UpdateRoomMetadata")
+    assert call["json"] == {
+        "room": "abc-defg-hij",
+        "metadata": '{"admin_pin": null}',
+    }
+
+
+def test_probe_reachable_is_true_on_200(livekit_provider):
+    livekit_provider._fake_requests.queue = [_FakeResp(status_code=200)]
+    assert livekit_provider.probe_reachable() is True
+
+
+def test_probe_reachable_never_raises(livekit_provider, monkeypatch):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(livekit_provider._fake_requests, "post", _boom)
+    # A health probe that can itself throw is not a probe.
+    assert livekit_provider.probe_reachable() is False

@@ -32,6 +32,29 @@ def _display_name(user) -> str:
     return name or getattr(user, "email", "") or str(getattr(user, "pk", user))
 
 
+def _avatar(user) -> str:
+    """The picture that travels with the name into the call, if the host's
+    user model has one.
+
+    Duck-typed on purpose: this library does not own the user model and will
+    not grow an opinion about where a picture lives. It reads the two shapes
+    the fleet actually uses (``avatar_url``, and an ``avatar`` file/URL field)
+    and otherwise sends "", which the provider still writes as an explicit
+    empty JSON field so a client never has to branch on absence."""
+    for attr in ("avatar_url", "avatar"):
+        try:
+            value = getattr(user, attr, None)
+            if callable(value):
+                value = value()
+            if not value:
+                continue
+            url = getattr(value, "url", None)
+            return str(url or value)
+        except Exception:
+            continue
+    return ""
+
+
 # ── Create ─────────────────────────────────────────────────────────────────
 
 
@@ -103,9 +126,13 @@ def participants_queryset(room: Room):
 # ── Join / admission ───────────────────────────────────────────────────────
 
 
-def _mint_token(room: Room, user) -> str:
+def _mint_token(room: Room, user, client_session_id: str | None = None) -> str:
     return get_video_provider().mint_join_token(
-        room.provider_room_ref or room.join_code, user.pk, _display_name(user)
+        room.provider_room_ref or room.join_code,
+        user.pk,
+        _display_name(user),
+        _avatar(user),
+        client_session_id,
     )
 
 
@@ -123,11 +150,17 @@ def _should_auto_admit(room: Room, user, request) -> bool:
     return False
 
 
-def join_room(user, room: Room, request) -> dict:
+def join_room(
+    user, room: Room, request, client_session_id: str | None = None
+) -> dict:
     """Resolve a join against the room's access level.
 
     Returns ``{"status": ..., "room": room, "participant": p, "token": str?}``
     where status is ``admitted`` (token present), ``waiting`` or ``denied``.
+
+    ``client_session_id`` is forwarded untouched to the provider — it is the
+    caller's own browser mark, and a token minted without it re-ghosts on the
+    next reload (see ``VideoProvider.mint_join_token``).
     """
     participant, created = RoomParticipant.objects.get_or_create(
         room=room,
@@ -151,14 +184,14 @@ def join_room(user, room: Room, request) -> dict:
             participant.status = ParticipantStatus.ADMITTED
             participant.left_at = None
             participant.save(update_fields=["status", "left_at"])
-            return _admitted(room, participant, user)
+            return _admitted(room, participant, user, client_session_id)
         if participant.status == ParticipantStatus.ADMITTED:
-            return _admitted(room, participant, user)
+            return _admitted(room, participant, user, client_session_id)
 
     if _should_auto_admit(room, user, request):
         participant.status = ParticipantStatus.ADMITTED
         participant.save(update_fields=["status"])
-        return _admitted(room, participant, user)
+        return _admitted(room, participant, user, client_session_id)
 
     # Wait for a host — notify the lobby (host clients see the new arrival).
     notify_lobby(
@@ -173,12 +206,17 @@ def join_room(user, room: Room, request) -> dict:
     return {"status": "waiting", "room": room, "participant": participant}
 
 
-def _admitted(room: Room, participant: RoomParticipant, user) -> dict:
+def _admitted(
+    room: Room,
+    participant: RoomParticipant,
+    user,
+    client_session_id: str | None = None,
+) -> dict:
     return {
         "status": "admitted",
         "room": room,
         "participant": participant,
-        "token": _mint_token(room, user),
+        "token": _mint_token(room, user, client_session_id),
     }
 
 

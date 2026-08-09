@@ -7,6 +7,7 @@ from stapel_core.django.api.serializers import StapelDataclassSerializer
 
 from .dto import (
     AdmitResponse,
+    JoinRequest,
     JoinResponse,
     LobbyActionRequest,
     ParticipantListResponse,
@@ -44,6 +45,11 @@ class ParticipantListResponseSerializer(StapelDataclassSerializer):
 class RoomCreateRequestSerializer(StapelDataclassSerializer):
     class Meta:
         dataclass = RoomCreateRequest
+
+
+class JoinRequestSerializer(StapelDataclassSerializer):
+    class Meta:
+        dataclass = JoinRequest
 
 
 class LobbyActionRequestSerializer(StapelDataclassSerializer):

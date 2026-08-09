@@ -20,6 +20,7 @@ provider.
 |-----|--------|---------|----------|---------|
 | VIDEO_PROVIDER | env | axis: dotted path to a VideoProvider — which vendor carries the calls (SDK imported lazily). | no | stapel_video.providers.livekit.LiveKitProvider |
 | SCOPE_PROVIDER | env | dotted path to a ScopeProvider (scope membership for the scope_trusted auto-admit). | no | stapel_video.scope.DefaultScopeProvider |
+| LIVE_ROOMS_PROVIDER | env | dotted path to a LiveRoomsProvider — "which calls is this user in right now" for the profile.changed rename. Default reads this module's own tables; a host running its own rooms MUST point this at its adapter (system check stapel_video.E008 refuses to boot otherwise). | no | stapel_video.live_rooms.DefaultLiveRoomsProvider |
 | DEFAULT_ACCESS_LEVEL | env | axis: default room access — public \| scope_trusted \| restricted. | no | restricted |
 | DEFAULT_ADMIT_REQUIRED | env | axis: whether a fresh room starts with the lobby on. | no | true |
 | LIVEKIT_URL | env | LiveKit server URL (default provider). | no | (empty) |

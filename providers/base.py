@@ -2,10 +2,17 @@
 
 Generalized from a production LiveKit integration. ``mint_join_token`` and
 ``create_room`` are the mandatory core (every backend must issue join tokens
-and name its media room). The recording-egress trio + ``parse_webhook`` have
-default ``NotImplementedError`` bodies rather than being abstract, so a
-token-only backend (or a test fake that only exercises admission) stays valid
-without implementing recording.
+and name its media room). Everything else — the live-connection pair
+(``rename_participant`` / ``remove_participant``), the room-metadata pair, the
+health probe, the recording-egress trio and ``parse_webhook`` — has a default
+``NotImplementedError`` body rather than being abstract, so a token-only
+backend (or a test fake that only exercises admission) stays valid.
+
+The optional half is not decoration. Every method here addresses a LIVE
+connection or the running media room, and only the provider can: it invented
+the identity convention in ``mint_join_token``. A capability missing from this
+contract is a capability the product has to reach the vendor SDK for directly
+— which is how a provider layer gets forked in the first place.
 """
 from __future__ import annotations
 
@@ -31,7 +38,12 @@ class VideoProvider(ABC):
 
     @abstractmethod
     def mint_join_token(
-        self, provider_room_ref: str, user_id, user_name: str
+        self,
+        provider_room_ref: str,
+        user_id,
+        user_name: str,
+        user_avatar: str = "",
+        client_session_id: str | None = None,
     ) -> str:
         """Return a signed token letting ``user_id`` join ``provider_room_ref``.
 
@@ -39,6 +51,25 @@ class VideoProvider(ABC):
         provider that can push a later correction into a room the person is
         already sitting in implements :meth:`rename_participant`; see its
         docstring for why that is not optional in practice.
+
+        ``user_avatar`` is the picture the other clients render next to the
+        name. It rides along the same one-way trip the name does, which is why
+        :meth:`rename_participant` has to carry it back out untouched — a
+        mechanism that guards a field nothing can set is a mechanism guarding
+        nothing.
+
+        ``client_session_id``, when the caller supplies one, makes the
+        connection identity DETERMINISTIC for that browser instead of random.
+        The identity is the only handle a provider has on a connection, so a
+        fresh random one per connect means a page reload arrives as a
+        *stranger*: the pre-reload connection is still seated, and the vendor
+        can only reap it on its own disconnect timeout. Meanwhile the tile is
+        real, silent and duplicated — for every adopter, on every reload. It
+        heals itself a minute later, which is exactly why nobody ever catches
+        it in the act. Reconnecting under the SAME identity makes the vendor
+        evict the stale connection the instant the new one lands. Callers that
+        pass nothing keep the random suffix, so two genuine devices under one
+        user id still get two identities.
         """
         raise NotImplementedError
 
@@ -68,6 +99,55 @@ class VideoProvider(ABC):
         backend stays valid. ``actions.handle_profile_changed`` treats it as
         "this provider cannot push renames" and says so once, rather than
         pretending the rename arrived.
+        """
+        raise NotImplementedError
+
+    def remove_participant(self, provider_room_ref: str, user_id) -> int:
+        """Disconnect every live connection ``user_id`` holds in a room.
+
+        The kick counterpart of :meth:`rename_participant`, and it is here for
+        the same reason: the caller cannot address a connection it never
+        named. One person is N live identities (laptop, phone), so a kick that
+        removes one of them is not a kick. Returns how many connections were
+        disconnected; ``0`` — nobody of that user was in the room — is an
+        ordinary answer, not a failure. Raise :class:`VideoProviderError` on
+        transport failure.
+
+        Hosts reach this through their own kick/eviction paths (a host
+        removing a guest, a membership revoked upstream). It lives on the
+        contract rather than in a host helper because a host helper is a fork
+        of the provider by another name: the moment it exists, the vendor SDK
+        is imported in product code again and the next capability lands there
+        too.
+        """
+        raise NotImplementedError
+
+    # ── Room metadata ──────────────────────────────────────────────────
+
+    def get_room_metadata(self, provider_room_ref: str) -> dict:
+        """Read the room-level metadata blob every connected client sees.
+
+        A parsed dict; ``{}`` both for "no metadata" and for a room the
+        provider has not materialized yet (media rooms are typically lazy —
+        an empty room does not exist). Raise :class:`VideoProviderError` only
+        on a transport/protocol failure.
+        """
+        raise NotImplementedError
+
+    def update_room_metadata(self, provider_room_ref: str, metadata: dict) -> bool:
+        """Write the room-level metadata blob. Returns whether it landed."""
+        raise NotImplementedError
+
+    # ── Health ─────────────────────────────────────────────────────────
+
+    def probe_reachable(self) -> bool:
+        """Cheapest real call proving the backend answers us right now.
+
+        For a health endpoint (``register_dependency_check``), not for request
+        paths. It must exercise the same auth + network path the real calls
+        use — a probe that only pings a port answers "reachable" for a
+        deployment whose credentials are wrong — and it must not touch any
+        room's state. Never raises: an unreachable backend is ``False``.
         """
         raise NotImplementedError
 
