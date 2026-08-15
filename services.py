@@ -162,11 +162,23 @@ def join_room(
     caller's own browser mark, and a token minted without it re-ghosts on the
     next reload (see ``VideoProvider.mint_join_token``).
     """
+    existing = RoomParticipant.objects.filter(room=room, user=user).first()
+    if existing is not None:
+        return _rejoin(room, existing, user, request, client_session_id)
+
+    # The decision comes BEFORE the row. `consumers.py` admits anyone holding
+    # a RoomParticipant row, so a row written ahead of the verdict IS the
+    # verdict — it handed the lobby socket to a joiner the room was about to
+    # refuse, and to one whose admission lookup had not answered yet. A
+    # refusal that raises (503) now leaves nothing behind at all.
+    admit = _should_auto_admit(room, user, request)
     participant, created = RoomParticipant.objects.get_or_create(
         room=room,
         user=user,
         defaults={
-            "status": ParticipantStatus.WAITING,
+            "status": (
+                ParticipantStatus.ADMITTED if admit else ParticipantStatus.WAITING
+            ),
             "role": (
                 ParticipantRole.HOST
                 if room.created_by_id == user.pk
@@ -174,26 +186,45 @@ def join_room(
             ),
         },
     )
-
     if not created:
-        # DENIED is sticky for this room: honour the host's rejection.
-        if participant.status == ParticipantStatus.DENIED:
-            return {"status": "denied", "room": room, "participant": participant}
-        # A previously-admitted user who left is auto-readmitted.
-        if participant.status == ParticipantStatus.LEFT:
-            participant.status = ParticipantStatus.ADMITTED
-            participant.left_at = None
-            participant.save(update_fields=["status", "left_at"])
-            return _admitted(room, participant, user, client_session_id)
-        if participant.status == ParticipantStatus.ADMITTED:
-            return _admitted(room, participant, user, client_session_id)
+        # Raced with a concurrent join; the row that won decides.
+        return _rejoin(room, participant, user, request, client_session_id)
+    if admit:
+        return _admitted(room, participant, user, client_session_id)
+    return _wait(room, participant, user)
 
+
+def _rejoin(
+    room: Room,
+    participant: RoomParticipant,
+    user,
+    request,
+    client_session_id: str | None = None,
+) -> dict:
+    """A join by someone this room already holds a row for."""
+    # DENIED is sticky for this room: honour the host's rejection.
+    if participant.status == ParticipantStatus.DENIED:
+        return {"status": "denied", "room": room, "participant": participant}
+    # A previously-admitted user who left is auto-readmitted.
+    if participant.status == ParticipantStatus.LEFT:
+        participant.status = ParticipantStatus.ADMITTED
+        participant.left_at = None
+        participant.save(update_fields=["status", "left_at"])
+        return _admitted(room, participant, user, client_session_id)
+    if participant.status == ParticipantStatus.ADMITTED:
+        return _admitted(room, participant, user, client_session_id)
+    # Still waiting — and the answer may have changed since (a host dropped
+    # the lobby, the joiner joined the scope), so ask again rather than
+    # sentencing them to the row they got the first time.
     if _should_auto_admit(room, user, request):
         participant.status = ParticipantStatus.ADMITTED
         participant.save(update_fields=["status"])
         return _admitted(room, participant, user, client_session_id)
+    return _wait(room, participant, user)
 
-    # Wait for a host — notify the lobby (host clients see the new arrival).
+
+def _wait(room: Room, participant: RoomParticipant, user) -> dict:
+    """Park in the lobby and let the host clients see the arrival."""
     notify_lobby(
         room.join_code,
         {

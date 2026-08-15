@@ -2,7 +2,7 @@
 
 Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.
 
-Contract: axes 3 · surface 11 · extension points 4 · operations 7 · error codes 47.
+Contract: axes 3 · surface 11 · extension points 4 · operations 7 · error codes 49.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
@@ -74,7 +74,7 @@ Paths are relative to `/video/api/v1/`.
 - GET /rooms/{join_code} — video_api_v1_rooms_retrieve
 - POST /webhook — video_api_v1_webhook_create
 
-## Error codes (47) — the StapelError envelope
+## Error codes (49) — the StapelError envelope
 Render `t(code, params)`; branch UX on the remediation. Localized text lives in docs/errors.<lang>.md, not here.
 - error.400.bad_request [400] fix_input
 - error.400.captcha_invalid [400] retry
@@ -105,6 +105,7 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.403.verification_required [403] verify
 - error.403.video_join_denied [403] retry
 - error.403.video_not_room_host [403] retry
+- error.403.video_not_room_participant [403] retry
 - error.404.ad_not_found [404] retry
 - error.404.not_found [404] retry
 - error.404.verification_challenge_not_found [404] verify
@@ -123,3 +124,4 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.429.rate_limit [429] wait_and_retry {retry_after_minutes}
 - error.429.too_many_requests [429] wait_and_retry
 - error.500.internal [500] contact_support
+- error.503.mandate_unavailable [503] retry

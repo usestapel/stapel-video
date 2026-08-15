@@ -9,6 +9,7 @@ ERR_400_INVALID_ACCESS_LEVEL = "error.400.video_invalid_access_level"
 ERR_400_INVALID_WEBHOOK = "error.400.video_invalid_webhook"
 ERR_403_NOT_ROOM_HOST = "error.403.video_not_room_host"
 ERR_403_JOIN_DENIED = "error.403.video_join_denied"
+ERR_403_NOT_ROOM_PARTICIPANT = "error.403.video_not_room_participant"
 ERR_404_ROOM_NOT_FOUND = "error.404.video_room_not_found"
 ERR_404_PARTICIPANT_NOT_FOUND = "error.404.video_participant_not_found"
 
@@ -17,6 +18,7 @@ STAPEL_VIDEO_ERRORS = {
     ERR_400_INVALID_WEBHOOK: "Invalid or unverifiable provider webhook",
     ERR_403_NOT_ROOM_HOST: "Only the room host may perform this action",
     ERR_403_JOIN_DENIED: "You were denied entry to this room",
+    ERR_403_NOT_ROOM_PARTICIPANT: "Only a participant of this room may see this",
     ERR_404_ROOM_NOT_FOUND: "Room not found",
     ERR_404_PARTICIPANT_NOT_FOUND: "Waiting participant not found",
 }
@@ -29,6 +31,7 @@ __all__ = [
     "ERR_400_INVALID_WEBHOOK",
     "ERR_403_NOT_ROOM_HOST",
     "ERR_403_JOIN_DENIED",
+    "ERR_403_NOT_ROOM_PARTICIPANT",
     "ERR_404_ROOM_NOT_FOUND",
     "ERR_404_PARTICIPANT_NOT_FOUND",
 ]

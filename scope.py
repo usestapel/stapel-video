@@ -9,6 +9,8 @@ single global scope where every authenticated user is a member.
 """
 from __future__ import annotations
 
+from stapel_core.django.scope import MandateScopeMixin
+
 
 class ScopeProvider:
     """Contract for scope resolution/filtering + membership. Subclass and
@@ -25,17 +27,37 @@ class ScopeProvider:
     def is_member(self, request, scope_key: str) -> bool:
         """True if ``request``'s user is a trusted member of ``scope_key``.
 
-        Drives the ``scope_trusted`` auto-admit decision. A room with an empty
-        ``scope_key`` (no scope) has no trusted members by definition unless a
-        provider says otherwise.
+        Drives the ``scope_trusted`` auto-admit decision — which mints a live
+        media token and skips the lobby, so a False here is a lobby wait and a
+        True here is a seat in the call. A room with an empty ``scope_key``
+        (no scope) has no trusted members by definition unless a provider says
+        otherwise.
+
+        Answer False for "not a member". Raise
+        ``stapel_core.django.api.permissions.MandateUnavailable`` (503) for
+        "could not find out": a token is not the thing to hand out while the
+        question is still open.
         """
         raise NotImplementedError
 
 
-class DefaultScopeProvider(ScopeProvider):
-    """Single global scope: every room gets ``scope_key=""``, no query is
-    filtered, and every authenticated user counts as a member (single-tenant
-    hosts and tests). Swap for a workspace-aware provider in production."""
+class DefaultScopeProvider(MandateScopeMixin, ScopeProvider):
+    """Single global scope: every room gets ``scope_key=""`` and no query is
+    filtered (single-tenant hosts and tests).
+
+    ``is_member`` used to return ``user.is_authenticated``, which said that
+    "trusted member of this scope" and "has an account" are the same sentence.
+    They are not, and the gap between them was a join code away from a live
+    media token. It now answers with the third principal state
+    (``stapel_core.django.scope``): an account holding no mandate anywhere is
+    a member of nothing, so it waits in the lobby like any other stranger. In
+    a genuinely standalone deployment, where nobody holds a mandate, the
+    permissive behaviour stands and ``checks.py`` says so out loud.
+
+    Swap for a workspace-aware provider in production: this closes the guest
+    state, it does not tell one tenant's rooms from another's
+    (``stapel_video.E009``).
+    """
 
     def resolve(self, request) -> str:
         return ""
@@ -44,8 +66,7 @@ class DefaultScopeProvider(ScopeProvider):
         return queryset
 
     def is_member(self, request, scope_key: str) -> bool:
-        user = getattr(request, "user", None)
-        return bool(user and getattr(user, "is_authenticated", False))
+        return self.mandate_admits(request)
 
 
 def get_scope_provider() -> ScopeProvider:

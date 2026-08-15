@@ -17,6 +17,7 @@ cannot run with; W-level for entries that only degrade lazily.
   all.
 """
 from django.core import checks
+from stapel_core.django.scope import check_shipped_scope_provider
 
 
 @checks.register(checks.Tags.compatibility)
@@ -47,7 +48,7 @@ def check_video_provider(app_configs, **kwargs):
 @checks.register(checks.Tags.compatibility)
 def check_scope_provider(app_configs, **kwargs):
     from .conf import video_settings
-    from .scope import ScopeProvider
+    from .scope import DefaultScopeProvider, ScopeProvider
 
     try:
         provider = video_settings.SCOPE_PROVIDER
@@ -66,7 +67,16 @@ def check_scope_provider(app_configs, **kwargs):
                 id="stapel_video.E004",
             )
         ]
-    return []
+    # Importable and correctly typed says nothing about whether the shipped
+    # single-scope provider is still deciding who is a trusted scope member.
+    return check_shipped_scope_provider(
+        setting="STAPEL_VIDEO['SCOPE_PROVIDER']",
+        provider=provider,
+        shipped_cls=DefaultScopeProvider,
+        error_id="stapel_video.E009",
+        warning_id="stapel_video.W002",
+        isolates="room",
+    )
 
 
 @checks.register(checks.Tags.compatibility)

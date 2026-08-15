@@ -69,8 +69,18 @@ only calling a method without the extra raises. Resolve with
 
 A `ScopeProvider` (`resolve(request) -> scope_key`, `filter(qs, request)`,
 `is_member(request, scope_key) -> bool`) resolves the opaque scope and answers
-the one question `scope_trusted` needs — *is this user a trusted member?* The
-default is a single global scope where every authenticated user is a member; a
+the one question `scope_trusted` needs — *is this user a trusted member?*
+A True there skips the lobby and mints a live media token, so the shipped
+`DefaultScopeProvider` no longer answers it with `is_authenticated`: it
+answers with the third principal state (`stapel_core.django.scope`), and an
+account holding no mandate in any workspace waits in the lobby like any other
+stranger. Where nothing can answer that question at all, the permissive
+single-tenant behaviour stands. A lookup that cannot be answered raises 503 —
+a token is not the thing to hand out while the question is open.
+
+Guarded by system checks `E003`/`E004` (importable, correctly typed) and
+`E009`/`W002` — running the shipped single-scope provider is an ERROR where
+this deployment has workspaces, a warning where it is genuinely standalone. A
 host returns e.g. the active `workspace_id` and real membership.
 
 ### 3. Live rooms — `LIVE_ROOMS_PROVIDER` (dotted path, replace)

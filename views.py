@@ -25,6 +25,7 @@ from .errors import (
     ERR_400_INVALID_WEBHOOK,
     ERR_403_JOIN_DENIED,
     ERR_403_NOT_ROOM_HOST,
+    ERR_403_NOT_ROOM_PARTICIPANT,
     ERR_404_PARTICIPANT_NOT_FOUND,
     ERR_404_ROOM_NOT_FOUND,
 )
@@ -72,11 +73,28 @@ class SerializerSeamMixin:
 # ── Mappers ──────────────────────────────────────────────────────────────
 
 
-def room_to_dto(room) -> RoomResponse:
+def _is_participant(room, user) -> bool:
+    """Does this caller already belong to the room (creator or a row)?
+
+    A join code circulates: it is an invitation to ASK, never proof of
+    belonging. Anything that names other people or names the tenant is gated
+    on this, not on holding the code.
+    """
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if room.created_by_id == user.pk:
+        return True
+    return room.participants.filter(user_id=user.pk).exists()
+
+
+def room_to_dto(room, *, reveal_scope: bool = True) -> RoomResponse:
     return RoomResponse(
         id=str(room.id),
         join_code=room.join_code,
-        scope_key=room.scope_key,
+        # dto.py documents scope_key as the workspace/org id. A stranger with
+        # a join code may see that the room exists; which organization is
+        # meeting in it is not part of that.
+        scope_key=room.scope_key if reveal_scope else "",
         access_level=room.access_level,
         admit_required=room.admit_required,
         created_by_id=str(room.created_by_id),
@@ -152,7 +170,13 @@ class RoomDetailView(SerializerSeamMixin, APIView):
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
         response_cls = self.get_response_serializer_class()
-        return StapelResponse(response_cls(room_to_dto(room)))
+        return StapelResponse(
+            response_cls(
+                room_to_dto(
+                    room, reveal_scope=_is_participant(room, request.user)
+                )
+            )
+        )
 
 
 @extend_schema(tags=["Video"])
@@ -212,6 +236,10 @@ class RoomParticipantsView(SerializerSeamMixin, APIView):
         room = services.get_room(join_code)
         if room is None:
             return StapelErrorResponse(404, ERR_404_ROOM_NOT_FOUND)
+        # Every row here is somebody's identity. Holding the join code is not
+        # authority to enumerate who else is in the call.
+        if not _is_participant(room, request.user):
+            return StapelErrorResponse(403, ERR_403_NOT_ROOM_PARTICIPANT)
         qs = services.participants_queryset(room)
         paginator = ParticipantAnchorPagination()
         page = paginator.paginate_queryset(qs, request, view=self)

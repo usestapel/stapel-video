@@ -30,7 +30,7 @@ pip install stapel-video
 | Config axes | 3 |
 | Usage surface | 11 |
 | Extension points | 4 |
-| Error codes | 47 |
+| Error codes | 49 |
 | Fleet dependencies | [`stapel-auth`](https://github.com/usestapel/stapel-auth) (optional) · [`stapel-core`](https://github.com/usestapel/stapel-core) · [`stapel-profiles`](https://github.com/usestapel/stapel-profiles) (optional) · [`stapel-recordings`](https://github.com/usestapel/stapel-recordings) (optional) |
 
 ## Documentation
