@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.4.0"
+version = "0.4.1"
 description = "Video calls (rooms, lobby admission, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,7 +24,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "stapel-core>=0.10,<1.0",
+    # Floor: 0.26.0 emits docs/errors.json with the `owner` field the
+    # committed artifact and its drift gate require.
+    "stapel-core>=0.26.0,<1.0",
 ]
 
 [project.urls]

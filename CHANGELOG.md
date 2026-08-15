@@ -4,6 +4,16 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-08-15
+
+### Changed — `stapel-core` floor raised to 0.26.0
+
+`docs/errors.json` carries an `owner` per entry, and only stapel-core 0.26.0
+emits it. The floor lagged behind, so a consumer resolving an older core
+regenerated an artifact without `owner` and the drift gate went red — the
+field was declared but never required. The floor now matches the artifact
+that is committed.
+
 ## [0.4.0] — 2026-08-09
 
 The seam a product can adopt without forking the provider, and the reload ghost
