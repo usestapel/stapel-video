@@ -4,6 +4,37 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-08-16
+
+### Security — a trusted scope member is not merely an account holder
+
+Admission was decided *after* the `Participant` row was written, so the row the
+caller had just created was part of the evidence for letting them in. The row
+is not the bug; consulting it first was. Admission is now decided before
+anything is written, from the scope seam.
+
+- `ScopeProvider.is_member` answers the third principal state
+  (`stapel_core.django.scope`): a registered account holding no mandate
+  anywhere is not a member of the room's scope. `MandateUnavailable` (503) is
+  the answer for "could not find out" — a lookup that failed is not a
+  membership that was proven.
+- Participant identities and `scope_key` are gated behind
+  `error.403.video_not_room_participant` (`ERR_403_NOT_ROOM_PARTICIPANT`).
+  Who else is in the room, and which tenant the room belongs to, were readable
+  by anyone who could name the room.
+- New system checks for the shipped single-scope default carrying a
+  multi-tenant host.
+
+**Breaking**: a host whose provider answered `is_member` permissively, or
+returned `False` where it meant "lookup failed", changes behaviour — raise
+`MandateUnavailable` for the latter. Guests who could previously join a room
+by holding an account are refused.
+
+### Changed — `stapel-core` floor raised to 0.27.0
+
+`django/scope.py` — `MandateScopeMixin` and `check_shipped_scope_provider` —
+exists only in 0.27.0.
+
 ## [0.4.1] — 2026-08-15
 
 ### Changed — `stapel-core` floor raised to 0.26.0
