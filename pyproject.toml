@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.5.0"
+version = "0.5.1"
 description = "Video calls (rooms, lobby admission, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,7 +27,7 @@ dependencies = [
     # Floor: 0.27.0 ships django/scope.py — MandateScopeMixin and
     # check_shipped_scope_provider, which `is_member` and the system checks are
     # built on. (The `owner` field in docs/errors.json arrived in 0.26.0.)
-    "stapel-core>=0.27.0,<1.0",
+    "stapel-core>=0.30.0,<1.0",
 ]
 
 [project.urls]

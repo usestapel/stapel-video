@@ -4,6 +4,38 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] — 2026-08-16
+
+### Fixed — E009 measured configuration where it meant to measure a hole
+
+0.5.0's new `stapel_video.E009` refused boot for any multi-tenant deployment
+still on the shipped `DefaultScopeProvider`. It did not ask the one question
+that decides whether that provider decides anything: **is this module's URL
+surface mounted here?**
+
+A host that owns its own rooms installs stapel-video for its provider seam and
+its subscribers and never mounts the views. `get_scope_provider` has exactly two
+call sites — `RoomCreateView.post` and `_should_auto_admit`, reached only from
+`services.join_room` via `JoinView` — both behind that surface. With the surface
+unmounted, nothing routes to either, and the only way to satisfy the Error is a
+provider that provably never runs. meettoday's sandbox backend spent the
+afternoon down on exactly this.
+
+`check_scope_provider` now passes `surface_mounted` to core, which degrades the
+finding to `stapel_video.W002` with its own sentence: configured open, consulted
+by nothing today, and that changes the day you mount it. Warning rather than
+silence, because a URLconf walk cannot see a host calling `services.join_room`
+from its own Python.
+
+The asymmetry was inside this file: `E008` was already gating on the same walk
+and passing. It now shares the measurement instead of a copy of it.
+
+### Changed — the URLconf walk moves to core; floor raised to 0.30.0
+
+`_video_urls_mounted` delegates to `stapel_core.django.mounts.module_urls_mounted`.
+Every module shipping a scope seam asks the same question, so the mechanism
+belongs one layer down rather than re-copied per library.
+
 ## [0.5.0] — 2026-08-16
 
 ### Security — a trusted scope member is not merely an account holder

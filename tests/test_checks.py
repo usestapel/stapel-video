@@ -39,6 +39,43 @@ def test_the_shipped_provider_is_an_error_where_workspaces_can_answer():
     assert [m.id for m in msgs] == ["stapel_video.E009"]
 
 
+@override_settings(
+    STAPEL_VIDEO={"VIDEO_PROVIDER": FAKE},
+    ROOT_URLCONF="stapel_video.tests.urls_unmounted",
+)
+def test_an_unmounted_surface_downgrades_the_error_to_a_warning():
+    """meettoday, 2026-08-16: E009 kept a sandbox down over a hole it lacked.
+
+    A host that owns its own rooms installs this module for its provider seam
+    and its subscribers and never mounts the views. Nothing routes to
+    ``services.join_room``, so the shipped provider decides nothing — and the
+    only way to satisfy an Error there is a provider that provably never runs.
+    E008 was already gating on this same URLconf walk; E009 was not, and that
+    asymmetry inside one file was the defect.
+    """
+    from stapel_core.comm import function_registry
+    from stapel_core.django.mandate import MANDATE_FUNCTION, MANDATE_RESULT_KEY
+
+    function_registry.register(
+        MANDATE_FUNCTION, lambda payload: {MANDATE_RESULT_KEY: True}
+    )
+    try:
+        msgs = checks.check_scope_provider(None)
+    finally:
+        function_registry._providers.pop(MANDATE_FUNCTION, None)
+    assert [m.id for m in msgs] == ["stapel_video.W002"]
+    assert "not mounted" in msgs[0].msg
+
+
+@override_settings(
+    STAPEL_VIDEO={"VIDEO_PROVIDER": FAKE, "SCOPE_PROVIDER": SCOPED},
+    ROOT_URLCONF="stapel_video.tests.urls_unmounted",
+)
+def test_an_unmounted_surface_still_looks_at_the_provider():
+    """Unmounted is not a licence to stop reading SCOPE_PROVIDER at all."""
+    assert checks.check_scope_provider(None) == []
+
+
 @override_settings(STAPEL_VIDEO={"VIDEO_PROVIDER": FAKE, "SCOPE_PROVIDER": SCOPED})
 def test_a_real_swap_is_silent():
     assert checks.check_scope_provider(None) == []

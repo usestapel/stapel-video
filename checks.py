@@ -69,6 +69,12 @@ def check_scope_provider(app_configs, **kwargs):
         ]
     # Importable and correctly typed says nothing about whether the shipped
     # single-scope provider is still deciding who is a trusted scope member.
+    # MEASURED, not assumed — the same reading E008 makes below. A host that
+    # installs this module for its provider seam and its subscribers, and
+    # leaves the rooms surface unmounted, owns its own rooms: the shipped
+    # provider decides nothing there because nothing routes to the code that
+    # would consult it. Refusing that boot would demand a provider that
+    # provably never runs (meettoday, 2026-08-16).
     return check_shipped_scope_provider(
         setting="STAPEL_VIDEO['SCOPE_PROVIDER']",
         provider=provider,
@@ -76,6 +82,7 @@ def check_scope_provider(app_configs, **kwargs):
         error_id="stapel_video.E009",
         warning_id="stapel_video.W002",
         isolates="room",
+        surface_mounted=_video_urls_mounted(),
     )
 
 
@@ -157,34 +164,14 @@ def check_live_rooms_source_is_writable(app_configs, **kwargs):
 def _video_urls_mounted() -> bool:
     """Is any stapel_video view reachable in this deployment's URLconf?
 
-    Walked, not reversed: a host is free to mount the include under any prefix
-    and any namespace, and a reverse() by name would read that as "not
-    mounted". An unloadable URLconf answers True — Django's own url checks
-    report that, and this check must not turn one defect into two.
+    The walk itself lives in stapel_core.django.mounts (core 0.30.0) — two
+    checks here need it and the same question is E009's in every module that
+    ships a scope seam, so the mechanism belongs one layer down rather than
+    re-copied per library.
     """
-    try:
-        from django.urls import get_resolver
+    from stapel_core.django.mounts import module_urls_mounted
 
-        return _tree_has_video(get_resolver().url_patterns)
-    except Exception:
-        return True
-
-
-def _tree_has_video(patterns) -> bool:
-    for pattern in patterns:
-        nested = getattr(pattern, "url_patterns", None)
-        if nested is not None:
-            if _tree_has_video(nested):
-                return True
-            continue
-        callback = getattr(pattern, "callback", None)
-        view_class = getattr(callback, "view_class", None) or getattr(
-            callback, "cls", None
-        )
-        module = getattr(view_class or callback, "__module__", "") or ""
-        if module == "stapel_video" or module.startswith("stapel_video."):
-            return True
-    return False
+    return module_urls_mounted("stapel_video")
 
 
 @checks.register(checks.Tags.compatibility)
