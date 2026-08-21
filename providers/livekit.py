@@ -17,7 +17,7 @@ lifecycle via the ``video.egress_ended`` comm emit.
 """
 from __future__ import annotations
 
-from .base import VideoProvider, VideoProviderError
+from .base import VideoProvider, VideoProviderError, split_identity
 
 
 def _require_sdk():
@@ -206,6 +206,20 @@ class LiveKitProvider(VideoProvider):
                 )
             removed += 1
         return removed
+
+    def list_participants(self, provider_room_ref: str) -> list | None:
+        """The contract half of :meth:`_list_participants` — normalized rows.
+
+        Same twirp call, but the rows come back in the shape the rest of the
+        fleet speaks (``identity`` + its decomposition + ``joined_at`` as an
+        aware datetime) instead of LiveKit's wire dicts, which
+        :meth:`rename_participant` and :meth:`remove_participant` still want
+        raw because they hand ``metadata`` straight back.
+        """
+        raw = self._list_participants(provider_room_ref)
+        if raw is None:
+            return None
+        return [_participant_dict(p) for p in raw]
 
     def _list_participants(self, provider_room_ref: str):
         """``ListParticipants`` for a room, or None when the room is not live.
@@ -438,8 +452,16 @@ class LiveKitProvider(VideoProvider):
         if info is not None:
             for file_result in getattr(info, "file_results", None) or []:
                 storage_key = getattr(file_result, "filename", None) or storage_key
+        room = getattr(event, "room", None)
+        participant = getattr(event, "participant", None)
         return {
             "event": getattr(event, "event", None),
+            # Additive since 0.6.0 — see VideoProvider.parse_webhook. The four
+            # egress keys below are byte-identical to what 0.5.x returned.
+            "event_id": getattr(event, "id", None) or None,
+            "event_ts": _epoch_seconds(getattr(event, "created_at", None)),
+            "room": _room_dict(room),
+            "participant": _participant_dict(participant),
             "egress_id": egress_id,
             "status": _egress_status_name(info) if egress_id else None,
             "storage_key": storage_key,
@@ -464,6 +486,68 @@ def _mine(participants, user_id) -> list:
         if (identity := (p.get("identity") or ""))
         and (identity == user_id or identity.startswith(prefix))
     ]
+
+
+def _field(source, *names):
+    """One field off either a protobuf message or a twirp JSON dict.
+
+    The two readings of the same LiveKit type arrive by different doors: the
+    webhook receiver hands back protobuf objects (attributes, snake_case),
+    while the RoomService twirp endpoints answer JSON (keys, camelCase by the
+    protobuf JSON mapping). One accessor keeps ``_room_dict`` /
+    ``_participant_dict`` single so the webhook and the poller can never
+    disagree about what a participant is.
+    """
+    if source is None:
+        return None
+    for name in names:
+        if isinstance(source, dict):
+            value = source.get(name)
+        else:
+            value = getattr(source, name, None)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _epoch_seconds(value):
+    """A LiveKit unix-seconds timestamp as an aware UTC datetime, or None.
+
+    LiveKit stamps events and joins on ITS clock, in whole seconds, and a
+    zero is protobuf's "unset" rather than 1970 — a span opened at the epoch
+    would be a 56-year presence record, so it reads as no timestamp at all.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+
+def _room_dict(room) -> dict | None:
+    name = _field(room, "name")
+    if not name:
+        return None
+    return {"name": str(name), "sid": str(_field(room, "sid") or "")}
+
+
+def _participant_dict(participant) -> dict | None:
+    identity = _field(participant, "identity")
+    if not identity:
+        return None
+    identity = str(identity)
+    user_id, connection_id = split_identity(identity)
+    return {
+        "identity": identity,
+        "user_id": user_id,
+        "connection_id": connection_id,
+        "name": str(_field(participant, "name") or ""),
+        "joined_at": _epoch_seconds(_field(participant, "joined_at", "joinedAt")),
+    }
 
 
 def _timedelta_seconds(seconds):

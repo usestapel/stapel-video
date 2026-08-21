@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.presence.spans_export",
+  "description": "Cursor-paged snapshot of raw presence spans. Response: {\"rows\": [{\"span_id\", \"room_key\", \"user_id\", \"connection_id\", \"joined_at\", \"left_at\", \"close_reason\", \"duration_seconds\", \"seq\"}], \"cursor\": string|null, \"total\": integer|null} — the shape stapel_core.comm.projections._iter_snapshot pages through; `rows`, never `items`, because that reader looks for the key by name and an items-shaped answer rebuilds a consumer's table to EMPTY while reporting success. Paging is keyset over (joined_at, id), so a full walk visits every row exactly once even while the sweeper closes spans underneath it. `total` is reported on the first page only. `seq` is left_at (or joined_at, while open) in unix milliseconds — an Event's clock, so a live video.participant.left arriving mid-walk supersedes the snapshot row. left_at null means the connection is still open as far as this instance knows. Durations are RAW: no minimum is applied, since which stays count is the consumer's policy and baking it in would make a pricing change a code release.",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "cursor": {
+      "type": ["string", "null"],
+      "description": "Opaque continuation token from the previous page's `cursor`. Null/absent starts at the beginning."
+    },
+    "limit": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Rows per page. Absent/null means 500; values above 2000 are clamped."
+    },
+    "period": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}$",
+      "description": "Optional UTC calendar month filter, \"YYYY-MM\" — spans overlapping it. Absent exports everything retained."
+    },
+    "period_start": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window start (inclusive), as an alternative to `period`."
+    },
+    "period_end": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window end (exclusive)."
+    }
+  },
+  "additionalProperties": false
+}

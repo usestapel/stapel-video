@@ -15,6 +15,12 @@ cannot run with; W-level for entries that only degrade lazily.
   this module's URLs -> E. See below: this one is a wiring invariant, not a
   type check, and it is the reason the seam is allowed to have a default at
   all.
+- A WEBHOOK_HANDLERS overlay entry that cannot be imported or is not callable
+  -> E (the event it claims to handle is silently unhandled otherwise, and a
+  webhook that does nothing looks exactly like a webhook that was never sent).
+- The presence sweeper / span retention not scheduled in a deployment that
+  drives a beat schedule -> W. Both are jobs whose absence is invisible:
+  unswept spans stay open and keep counting, unpurged spans just accumulate.
 """
 from django.core import checks
 from stapel_core.django.scope import check_shipped_scope_provider
@@ -188,3 +194,134 @@ def check_default_access_level(app_configs, **kwargs):
             )
         ]
     return []
+
+
+@checks.register(checks.Tags.compatibility)
+def check_webhook_handlers(app_configs, **kwargs):
+    """E010: every WEBHOOK_HANDLERS overlay entry resolves to a callable.
+
+    The dispatch registry skips a broken entry at runtime and logs it, which
+    keeps a live webhook from 500-ing over somebody's typo — but a log line
+    in a webhook handler is not where an operator finds out that the event
+    they wired is doing nothing. Boot is.
+    """
+    from django.utils.module_loading import import_string
+
+    from .conf import video_settings
+
+    errors = []
+    for event, target in (video_settings.WEBHOOK_HANDLERS or {}).items():
+        if target is None or target == "":
+            continue  # tombstoning a builtin is a legitimate entry
+        if callable(target):
+            continue
+        try:
+            handler = import_string(target)
+        except Exception as exc:
+            errors.append(
+                checks.Error(
+                    f"STAPEL_VIDEO['WEBHOOK_HANDLERS'][{event!r}] is "
+                    f"configured but broken: {exc}",
+                    hint=(
+                        f"Point it at a callable taking the normalized event "
+                        f"dict, or set it to None to stop handling {event!r}."
+                    ),
+                    id="stapel_video.E010",
+                )
+            )
+            continue
+        if not callable(handler):
+            errors.append(
+                checks.Error(
+                    f"STAPEL_VIDEO['WEBHOOK_HANDLERS'][{event!r}] -> "
+                    f"{target!r} is not callable.",
+                    id="stapel_video.E010",
+                )
+            )
+    return errors
+
+
+@checks.register(checks.Tags.compatibility)
+def check_presence_sweep_is_scheduled(app_configs, **kwargs):
+    """W003: nothing in the beat schedule reconciles open presence spans.
+
+    Every presence span this instance opens is closed by one of three things:
+    a ``participant_left`` webhook, an explicit leave, or the sweeper. The
+    first two are the happy paths and the third is the only one that covers a
+    crashed client whose departure was never reported, a webhook the provider
+    dropped, or a room the media server restarted under. Without it those
+    spans stay open and keep accruing time for as long as the table lives —
+    an over-count with no upper bound, in the numbers a licence is sold on.
+
+    Only hosts that drive a beat schedule are checked: a host with no
+    ``CELERY_BEAT_SCHEDULE`` runs ``manage.py video_sweep_presence`` from its
+    own cron, which this process cannot see and must not second-guess.
+    """
+    from django.conf import settings
+
+    from .tasks import SWEEP_TASK_NAME
+
+    schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", None)
+    if not schedule:
+        return []
+    if _scheduled(schedule, SWEEP_TASK_NAME):
+        return []
+    return [
+        checks.Warning(
+            "CELERY_BEAT_SCHEDULE has no entry for "
+            f"{SWEEP_TASK_NAME}: a presence span whose provider webhook was "
+            "lost will stay open forever and keep accruing billable time.",
+            hint=(
+                "CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...} "
+                "(stapel_video.tasks), or run the video_sweep_presence "
+                "management command from cron on the "
+                "PRESENCE_SWEEP_INTERVAL_SECONDS cadence."
+            ),
+            id="stapel_video.W003",
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_presence_retention_is_scheduled(app_configs, **kwargs):
+    """W004: the span retention window is set and nothing enforces it.
+
+    ``PRESENCE_SPAN_RETENTION_DAYS = None`` is not reported: keeping the
+    spans forever is then a stated decision, not an accident.
+    """
+    from django.conf import settings
+
+    from .conf import video_settings
+    from .tasks import PURGE_TASK_NAME
+
+    if video_settings.PRESENCE_SPAN_RETENTION_DAYS is None:
+        return []
+    schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", None)
+    if not schedule:
+        return []
+    if _scheduled(schedule, PURGE_TASK_NAME):
+        return []
+    return [
+        checks.Warning(
+            "STAPEL_VIDEO['PRESENCE_SPAN_RETENTION_DAYS'] is "
+            f"{video_settings.PRESENCE_SPAN_RETENTION_DAYS!r}, but "
+            f"CELERY_BEAT_SCHEDULE has no entry for {PURGE_TASK_NAME}: "
+            "presence spans are kept for as long as the table exists, "
+            "whatever the setting says.",
+            hint=(
+                "CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...} "
+                "(stapel_video.tasks), run the video_purge_spans management "
+                "command from cron, or set PRESENCE_SPAN_RETENTION_DAYS = "
+                "None to state that this deployment keeps spans indefinitely."
+            ),
+            id="stapel_video.W004",
+        )
+    ]
+
+
+def _scheduled(schedule, task_name: str) -> bool:
+    return any(
+        (entry or {}).get("task") == task_name
+        for entry in schedule.values()
+        if isinstance(entry, dict)
+    )

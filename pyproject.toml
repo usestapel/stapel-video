@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.5.1"
-description = "Video calls (rooms, lobby admission, recording-egress seam) for the Stapel framework"
+version = "0.6.0"
+description = "Video calls (rooms, lobby admission, presence metering, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -54,6 +54,8 @@ packages = [
     "stapel_video",
     "stapel_video.migrations",
     "stapel_video.providers",
+    "stapel_video.management",
+    "stapel_video.management.commands",
 ]
 
 [tool.setuptools.package-data]

@@ -31,3 +31,7 @@ provider.
 | EGRESS_S3_BUCKET | env | recording-egress bucket. | no | (empty) |
 | EGRESS_S3_ACCESS_KEY | vault | recording-egress access key. | no | (empty) |
 | EGRESS_S3_SECRET_KEY | vault | recording-egress secret key. | no | (empty) |
+| WEBHOOK_HANDLERS | env | merge registry over `webhooks.BUILTIN_WEBHOOK_HANDLERS`: `{provider event type: dotted path \| None to remove}`. Never read from the environment — a stray string would be iterated as characters. | no | {} (builtins: egress_ended, egress_updated, participant_joined, participant_left) |
+| PRESENCE_SWEEP_INTERVAL_SECONDS | env | how often the reconciler compares open presence spans against the media server's roster. Also the worst-case over-count of a lost `participant_left`. | no | 60 |
+| PRESENCE_SPAN_RETENTION_DAYS | env | age at which `video_purge_spans` deletes a ParticipantSpan. `None` = keep forever (stated, not drifted into). | no | 400 |
+| PRESENCE_PURGE_SCHEDULE | env | crontab kwargs for the retention purge in `get_video_beat_schedule()`. Never read from the environment (a string is not a schedule). | no | {"hour": 4, "minute": 10} |

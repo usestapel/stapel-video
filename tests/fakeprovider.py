@@ -3,10 +3,45 @@
 Tokens are deterministic strings; egress ids are counters; ``parse_webhook``
 treats the body as JSON and a caller-supplied ``valid`` flag stands in for a
 signature check. Exercises the full seam without LiveKit installed.
+
+``parse_webhook`` normalizes the same shape LiveKitProvider does (the four
+egress keys plus room/participant/timestamps), reading unix seconds out of the
+JSON body the way the real one reads them off the protobuf, so an ingest test
+exercises the actual contract rather than a fixture the code was written
+around. ``live`` stands in for the media server's roster.
 """
 import json
+from datetime import datetime, timezone
 
-from stapel_video.providers.base import VideoProvider, VideoProviderError
+from stapel_video.providers.base import (
+    VideoProvider,
+    VideoProviderError,
+    split_identity,
+)
+
+
+def _epoch(value):
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc) if seconds > 0 else None
+
+
+def _participant(raw):
+    if not raw:
+        return None
+    identity = str(raw.get("identity") or "")
+    if not identity:
+        return None
+    user_id, connection_id = split_identity(identity)
+    return {
+        "identity": identity,
+        "user_id": user_id,
+        "connection_id": connection_id,
+        "name": str(raw.get("name") or ""),
+        "joined_at": _epoch(raw.get("joined_at")),
+    }
 
 
 class FakeProvider(VideoProvider):
@@ -22,6 +57,10 @@ class FakeProvider(VideoProvider):
     removals: list = []
     #: room_ref -> metadata dict, for the metadata pair.
     metadata: dict = {}
+    #: room_ref -> list of raw participant dicts the media server would
+    #: report, or None for "that room does not exist". Drives
+    #: ``list_participants`` and therefore the presence sweeper.
+    live: dict = {}
 
     def create_room(self, join_code: str, *, scope_key: str = "") -> str:
         return f"fake-room::{join_code}"
@@ -79,7 +118,24 @@ class FakeProvider(VideoProvider):
             raise VideoProviderError(f"malformed body: {exc}") from exc
         return {
             "event": data.get("event"),
+            "event_id": data.get("id"),
+            "event_ts": _epoch(data.get("created_at")),
+            "room": (
+                {
+                    "name": str((data.get("room") or {}).get("name") or ""),
+                    "sid": str((data.get("room") or {}).get("sid") or ""),
+                }
+                if data.get("room")
+                else None
+            ),
+            "participant": _participant(data.get("participant")),
             "egress_id": data.get("egress_id"),
             "status": data.get("status"),
             "storage_key": data.get("storage_key"),
         }
+
+    def list_participants(self, provider_room_ref: str):
+        raw = FakeProvider.live.get(provider_room_ref, None)
+        if raw is None:
+            return None
+        return [p for p in (_participant(entry) for entry in raw) if p]

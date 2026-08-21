@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.participant.joined",
+  "description": "A connection joined a call: the opening half of a presence span. Ids and timestamps only — no display name and no email travel on the bus; a subscriber that needs one asks the profile side by user_id. joined_at is the MEDIA SERVER's timestamp, not the moment we received the webhook. connection_id is the per-browser half of the provider identity {user_id}_{client_session_id}: one person on a laptop and a phone is one user_id and two connection_ids, which is why presence time is unioned per user rather than summed per connection. Emitted once per span this instance created — a redelivered provider webhook is deduplicated on (connection_id, joined_at) and emits nothing.",
+  "type": "object",
+  "required": ["span_id", "room_key", "user_id", "connection_id", "joined_at"],
+  "properties": {
+    "span_id":       { "type": "string", "format": "uuid" },
+    "room_key":      { "type": "string" },
+    "user_id":       { "type": "string" },
+    "connection_id": { "type": "string" },
+    "joined_at":     { "type": "string" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.participant.left",
+  "description": "A connection's stay in a call ended: the closing half of a presence span, carrying the finished interval and how we learned of it. close_reason is the provenance of left_at — \"webhook\" (the media server observed the departure, the only witness that survives a client crash), \"explicit\" (a leave button or a kick), \"sweeper\" (nobody reported it; the reconciler found the connection gone and closed the span at the last moment it was confirmed present, so the value is an estimate bounded by the sweep interval). duration_seconds is raw: no threshold, no rounding, no plan. Emitted once per span — a closed span is never reopened or restated, so a redelivered departure emits nothing.",
+  "type": "object",
+  "required": ["span_id", "room_key", "user_id", "connection_id", "joined_at", "left_at", "duration_seconds"],
+  "properties": {
+    "span_id":          { "type": "string", "format": "uuid" },
+    "room_key":         { "type": "string" },
+    "user_id":          { "type": "string" },
+    "connection_id":    { "type": "string" },
+    "joined_at":        { "type": "string" },
+    "left_at":          { "type": "string" },
+    "close_reason":     { "type": "string", "enum": ["explicit", "webhook", "sweeper"] },
+    "duration_seconds": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": true
+}

@@ -10,7 +10,7 @@
 [![license](https://img.shields.io/github/license/usestapel/stapel-video)](https://github.com/usestapel/stapel-video/blob/main/LICENSE)
 [![llms.txt](https://img.shields.io/badge/llms.txt-blue)](https://github.com/usestapel/stapel-video/blob/main/docs/llms.txt)
 
-> Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.
+> Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them.
 
 Part of the [Stapel framework](https://github.com/usestapel) — composable Django apps that deploy as a monolith or as microservices without changing module code.
 
@@ -24,12 +24,12 @@ pip install stapel-video
 
 | Fact | Value |
 |---|---|
-| Version | `0.5.1` |
+| Version | `0.6.0` |
 | Python | `>=3.11` (3.11, 3.12, 3.13, 3.14) |
 | HTTP operations | 7 |
 | Config axes | 3 |
-| Usage surface | 11 |
-| Extension points | 4 |
+| Usage surface | 25 |
+| Extension points | 10 |
 | Error codes | 49 |
 | Fleet dependencies | [`stapel-auth`](https://github.com/usestapel/stapel-auth) (optional) · [`stapel-core`](https://github.com/usestapel/stapel-core) · [`stapel-profiles`](https://github.com/usestapel/stapel-profiles) (optional) · [`stapel-recordings`](https://github.com/usestapel/stapel-recordings) (optional) |
 
@@ -52,6 +52,11 @@ pip install stapel-video
   provider and a `video.egress_ended` comm event carries the storage key to
   [stapel-recordings](https://github.com/usestapel/stapel-recordings) — by
   event, never by import.
+- **Presence metering** — per-connection spans fed by the media server's own
+  join/leave webhooks (the only departure signal that survives a closed
+  laptop), reconciled by a sweeper so a lost webhook cannot bill forever, and
+  read back as unioned presence time and a co-presence matrix. Raw seconds, no
+  threshold: this instance meters, whatever prices it decides what counts.
 
 Alpha. See [MODULE.md](https://github.com/usestapel/stapel-video/blob/main/MODULE.md) for the agent-facing map of seams.
 
@@ -99,9 +104,40 @@ application = ProtocolTypeRouter({
 | `DEFAULT_ACCESS_LEVEL` | `restricted` | Access level for a room created without one |
 | `DEFAULT_ADMIT_REQUIRED` | `True` | Whether new rooms start with the lobby on |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `""` | Default-provider credentials |
+| `WEBHOOK_HANDLERS` | `{}` | Provider-event → handler, merged over the builtins |
+| `PRESENCE_SWEEP_INTERVAL_SECONDS` | `60` | How often open presence spans are reconciled |
+| `PRESENCE_SPAN_RETENTION_DAYS` | `400` | When a span is purged (`None` = never) |
 
 `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and `DEFAULT_ADMIT_REQUIRED` are the
 three CTO-facing config axes surfaced in `docs/capabilities.json`.
+
+## Presence metering
+
+Turn the provider's webhooks on (they point at `POST /video/api/webhook`), and
+schedule the two jobs — a meter without the sweeper measures an upper bound,
+not a duration:
+
+```python
+from stapel_video.tasks import get_video_beat_schedule
+
+CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...}
+```
+
+Celery is optional: `manage.py video_sweep_presence` and `manage.py
+video_purge_spans` are the cron form. Then read the numbers by comm Function:
+
+```python
+from stapel_core.comm import call
+
+call("video.presence.aggregate", {"user_id": uid, "period": "2026-08"})
+# {"presence_seconds": 5400, "rooms_count": 3, ...} — unioned, so a laptop
+# and a phone are one person present, not two.
+
+call("video.presence.pairs_export", {"period": "2026-08", "limit": 500})
+# {"rows": [{"room_key", "user_a", "user_b", "co_presence_seconds"}, ...],
+#  "cursor": ..., "total": None} — raw overlaps; the "counts as a real
+#  conversation" threshold belongs to whoever asks, not to the meter.
+```
 
 ## License
 

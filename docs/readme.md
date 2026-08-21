@@ -13,6 +13,11 @@
   provider and a `video.egress_ended` comm event carries the storage key to
   [stapel-recordings](https://github.com/usestapel/stapel-recordings) — by
   event, never by import.
+- **Presence metering** — per-connection spans fed by the media server's own
+  join/leave webhooks (the only departure signal that survives a closed
+  laptop), reconciled by a sweeper so a lost webhook cannot bill forever, and
+  read back as unioned presence time and a co-presence matrix. Raw seconds, no
+  threshold: this instance meters, whatever prices it decides what counts.
 
 Alpha. See [MODULE.md](https://github.com/usestapel/stapel-video/blob/main/MODULE.md) for the agent-facing map of seams.
 
@@ -60,6 +65,37 @@ application = ProtocolTypeRouter({
 | `DEFAULT_ACCESS_LEVEL` | `restricted` | Access level for a room created without one |
 | `DEFAULT_ADMIT_REQUIRED` | `True` | Whether new rooms start with the lobby on |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `""` | Default-provider credentials |
+| `WEBHOOK_HANDLERS` | `{}` | Provider-event → handler, merged over the builtins |
+| `PRESENCE_SWEEP_INTERVAL_SECONDS` | `60` | How often open presence spans are reconciled |
+| `PRESENCE_SPAN_RETENTION_DAYS` | `400` | When a span is purged (`None` = never) |
 
 `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and `DEFAULT_ADMIT_REQUIRED` are the
 three CTO-facing config axes surfaced in `docs/capabilities.json`.
+
+## Presence metering
+
+Turn the provider's webhooks on (they point at `POST /video/api/webhook`), and
+schedule the two jobs — a meter without the sweeper measures an upper bound,
+not a duration:
+
+```python
+from stapel_video.tasks import get_video_beat_schedule
+
+CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...}
+```
+
+Celery is optional: `manage.py video_sweep_presence` and `manage.py
+video_purge_spans` are the cron form. Then read the numbers by comm Function:
+
+```python
+from stapel_core.comm import call
+
+call("video.presence.aggregate", {"user_id": uid, "period": "2026-08"})
+# {"presence_seconds": 5400, "rooms_count": 3, ...} — unioned, so a laptop
+# and a phone are one person present, not two.
+
+call("video.presence.pairs_export", {"period": "2026-08", "limit": 500})
+# {"rows": [{"room_key", "user_a", "user_b", "co_presence_seconds"}, ...],
+#  "cursor": ..., "total": None} — raw overlaps; the "counts as a real
+#  conversation" threshold belongs to whoever asks, not to the meter.
+```

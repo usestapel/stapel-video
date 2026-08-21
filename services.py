@@ -322,36 +322,27 @@ def stop_egress(egress_id: str) -> None:
 
 
 def handle_webhook(body: bytes, auth_header: str) -> dict:
-    """Verify + decode a provider webhook and, on an egress-ended event, emit
-    ``video.egress_ended`` so stapel-recordings (or any subscriber) can finalize
-    the upload. Returns the normalized provider dict. Raises VideoProviderError
-    on a bad signature — the view maps that to a 400."""
-    from stapel_core.comm import emit
+    """Verify + decode a provider webhook and run the handler for its event type.
+
+    Returns the normalized provider dict. Raises VideoProviderError on a bad
+    signature — the view maps that to a 400.
+
+    Dispatch is a merge registry (``stapel_video.webhooks``), not the
+    ``if egress_ended`` this used to be. That branch was the reason
+    ``participant_joined`` / ``participant_left`` / ``room_finished`` arrived
+    at the URL, passed the signature check and were dropped: the only way to
+    react to a second event was to fork the ingress or terminate the webhook
+    in product code and re-implement verification there.
+
+    An event nothing handles is a 200 with no work — most of what a media
+    server sends (track_published, room_started, …) is not addressed to us,
+    and answering 4xx would make the provider retry a delivery that was
+    perfectly correct.
+    """
+    from .webhooks import get_webhook_handler
 
     parsed = get_video_provider().parse_webhook(body, auth_header)
-    if _is_egress_ended(parsed):
-        with transaction.atomic():
-            emit(
-                "video.egress_ended",
-                {
-                    "egress_id": parsed.get("egress_id"),
-                    "status": parsed.get("status"),
-                    "storage_key": parsed.get("storage_key"),
-                },
-                key=str(parsed.get("egress_id") or ""),
-            )
+    handler = get_webhook_handler(parsed.get("event") or "")
+    if handler is not None:
+        handler(parsed)
     return parsed
-
-
-def _is_egress_ended(parsed: dict) -> bool:
-    """A recording finished. LiveKit emits a dedicated ``egress_ended`` event;
-    some deployments only send ``egress_updated`` carrying a terminal status."""
-    event = (parsed.get("event") or "").lower()
-    status = (parsed.get("status") or "").upper()
-    if event == "egress_ended":
-        return True
-    return event == "egress_updated" and status in (
-        "EGRESS_COMPLETE",
-        "EGRESS_ABORTED",
-        "EGRESS_FAILED",
-    )

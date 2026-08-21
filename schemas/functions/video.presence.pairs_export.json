@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.presence.pairs_export",
+  "description": "Cursor-paged co-presence matrix for a period. Response: {\"rows\": [{\"room_key\", \"user_a\", \"user_b\", \"co_presence_seconds\"}], \"cursor\": string|null, \"total\": null}. One row per unordered pair per room with user_a < user_b — a pair is one fact, not two — carrying the RAW overlap in seconds of the two people's merged timelines in that room. No minimum is applied: the \"counts as a real conversation\" threshold is revised per customer in the external billing service, and an export that had already dropped short overlaps could not answer the revised question. Anonymous guests are ordinary people here. Paging is keyset over (room_key, user_a, user_b). `total` is always null — counting the pairs costs exactly as much as computing them, and the canon reads null as \"the owner does not report it\". Cost is quadratic in a room's distinct attendees (a co-presence matrix has N²/2 cells); rooms are the batch boundary, so memory stays proportional to one room.",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "period": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}$",
+      "description": "UTC calendar month, \"YYYY-MM\". Takes precedence over period_start/period_end."
+    },
+    "period_start": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window start (inclusive), for a reporting window that is not a calendar month."
+    },
+    "period_end": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window end (exclusive)."
+    },
+    "cursor": {
+      "type": ["string", "null"],
+      "description": "Opaque continuation token from the previous page's `cursor`. Null/absent starts at the beginning."
+    },
+    "limit": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Rows per page. Absent/null means 500; values above 2000 are clamped."
+    }
+  },
+  "additionalProperties": false
+}

@@ -30,13 +30,26 @@
   storage key) for stapel-recordings to finalize. This library ships no
   recording pipeline and **imports no recordings model** — integration is the
   comm event only.
+- **Presence metering — `ParticipantSpan`.** One connection's stay in one room,
+  `[joined_at, left_at)`, keyed on an opaque `room_key`, a `user_id` string
+  (no FK) and the `connection_id` half of the provider identity. Fed by the
+  media server's own `participant_joined` / `participant_left` webhooks —
+  the only departure signal that survives a closed laptop — reconciled by a
+  **sweeper** so a lost webhook costs one sweep interval instead of an
+  unbounded span, and read back through three comm Functions as unioned
+  presence time and a co-presence matrix. Append-only: a closed span is never
+  reopened or restated, so a product's grace-window policy cannot silently
+  rewrite a billing period. Nothing here prices anything.
 - **API** — room create/info/join, participants (anchor-paginated), lobby
   admit/deny (host-only), and a signed provider webhook ingress. DTO/serializer
   seams + OpenAPI (drf-spectacular).
-- **comm surface** — emits `video.egress_ended`; consumes `user.deleted` (GDPR)
-  and `profile.changed` (pushes a renamed person's new name onto the
-  connections they already hold — the name is a claim frozen inside the join
-  token, so a rename otherwise reaches a live call only on reconnect).
+- **comm surface** — emits `video.egress_ended`, `video.participant.joined`
+  and `video.participant.left`; provides `video.presence.aggregate`,
+  `video.presence.spans_export` and `video.presence.pairs_export`; consumes
+  `user.deleted` (GDPR) and `profile.changed` (pushes a renamed person's new
+  name onto the connections they already hold — the name is a claim frozen
+  inside the join token, so a rename otherwise reaches a live call only on
+  reconnect).
 
 ## Extension points (fork-free)
 
@@ -46,9 +59,19 @@ A `VideoProvider` (ABC, `providers/base.py`) is the one seam a video vendor
 plugs into: `create_room` / `mint_join_token` (mandatory core), the
 live-connection pair `rename_participant` / `remove_participant`, the room
 metadata pair `get_room_metadata` / `update_room_metadata`, the health probe
-`probe_reachable`, and `start_room_egress` / `stop_room_egress` /
+`probe_reachable`, `list_participants` (the live roster the presence sweeper
+reconciles against), and `start_room_egress` / `stop_room_egress` /
 `parse_webhook` (recording). Everything but the core defaults to
 `NotImplementedError`, so a token-only backend stays valid.
+
+`parse_webhook` returns the **whole** normalized event — `event`, `event_id`,
+`event_ts`, `room`, `participant` (with the identity decomposed into
+`user_id` + `connection_id` by the provider that invented the convention),
+plus the original four egress keys. Before 0.6.0 it returned only those four,
+which is why `participant_joined` / `participant_left` / `room_finished`
+arrived at the URL, passed the signature check and were dropped: the media
+server was telling us who was in the call and the normalizer was throwing it
+away. Timestamps are the provider's server clock, never our receipt time.
 
 The optional half is not decoration: every one of those methods addresses a
 LIVE connection or the running media room, and only the provider can, because
@@ -113,6 +136,94 @@ When a room recording finishes, the webhook path emits `video.egress_ended`
 finalizes the upload the egress wrote. **This module creates no recording
 resource itself.** Schema: `schemas/emits/video.egress_ended.json`.
 
+### 5. Webhook dispatch — `WEBHOOK_HANDLERS` (**merge** registry)
+
+Which provider event runs which handler, in the fleet's standard three-layer
+merge shape (`webhooks.py`): `BUILTIN_WEBHOOK_HANDLERS` ← the settings overlay
+`STAPEL_VIDEO["WEBHOOK_HANDLERS"]` (`{event: dotted-path | None to remove}`)
+← runtime `register_webhook_handler(event, handler)`.
+
+```python
+STAPEL_VIDEO = {
+    "WEBHOOK_HANDLERS": {
+        "room_finished": "myproject.video.on_room_finished",  # add
+        "egress_ended": None,                                  # remove
+    },
+}
+```
+
+A handler takes the normalized event dict and returns nothing; it runs inside
+the ingress request and owns its own idempotency. This replaced a hardcoded
+`if egress_ended`, which meant the only way to react to a second event was to
+fork the ingress or terminate the webhook in product code — and re-implement
+signature verification there. An event nothing handles is a quiet 200: a 4xx
+would make the provider retry a delivery that was perfectly correct. A broken
+overlay entry is `stapel_video.E010` at boot (and skipped-with-a-log at
+runtime, so a typo cannot 500 a live webhook).
+
+### 6. Presence metering — spans, the sweeper, and three Query-Functions
+
+`ParticipantSpan` is the unit of truth and everything else is derived. The
+three writers, in descending order of trust: the provider's webhooks, the
+sweeper, and the host's explicit `presence.close_spans_explicitly` (a leave
+button). Ingest is idempotent on `(connection_id, joined_at)` — the provider's
+own join timestamp — so at-least-once, out-of-order delivery cannot
+double-count anybody, and a `participant_left` that overtakes its
+`participant_joined` materializes the whole closed span by itself.
+
+**Schedule both jobs.** A meter without the sweeper is metering an upper
+bound, not a duration:
+
+```python
+from stapel_video.tasks import get_video_beat_schedule
+
+CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...}
+```
+
+Celery is optional — `stapel_video.tasks.sweep_presence` and
+`purge_presence_spans` are plain callables, and `manage.py
+video_sweep_presence` / `video_purge_spans` are the cron form.
+`stapel_video.W003` / `W004` fire when a host drives a beat schedule with no
+entry for either.
+
+The read side (`schemas/functions/`):
+
+| Function | Payload | Answer |
+|---|---|---|
+| `video.presence.aggregate` | `{user_id\|room_key, period}` | `{presence_seconds, rooms_count, users_count, spans_count, …}` |
+| `video.presence.spans_export` | `{cursor, limit, period?}` | `{rows, cursor, total}` — raw spans |
+| `video.presence.pairs_export` | `{period, cursor, limit}` | `{rows, cursor, total}` — `(user_a, user_b, room_key, co_presence_seconds)` |
+
+Three rules the numbers depend on:
+
+- **Union, never sum.** A person on a laptop and a phone was present once.
+  Summing connection durations bills a second device as a second human.
+- **No threshold, anywhere.** "More than 15 minutes counts" is the consumer's
+  policy, revised per customer; an export that had already dropped the short
+  overlaps could not answer the revised question. Everything is raw seconds.
+- **`{rows, cursor, total}`, never `{items}`.** Core's snapshot reader looks
+  for `rows` by name — an items-shaped answer rebuilds a consumer's projection
+  to EMPTY and reports success doing it.
+
+`pairs_export` is **quadratic in a room's distinct attendees** (a co-presence
+matrix has N²/2 cells; a 30-person meeting is 435 pair evaluations, a
+500-person webinar ~125k). Rooms are the batch boundary, so memory stays
+proportional to one room. That is the shape of the question, not of the
+implementation — the mitigation for a broadcast-shaped room is to stop asking
+it, not to rewrite the loop.
+
+Retention: `PRESENCE_SPAN_RETENTION_DAYS` (400) deletes spans by `joined_at`.
+This module keeps **no rollup table** — the aggregate is computed from spans
+every time, which is the only way it stays correct while the sweeper is still
+closing yesterday's zombies. A host needing numbers older than the window
+snapshots them through `spans_export`.
+
+GDPR: `ParticipantSpan.user_id` is a `CharField`, not a FK, so erasure is a
+decision rather than a cascade. `VideoGDPRProvider.delete` **pseudonymizes**
+it (a keyed digest) instead of deleting the rows: the person goes, the
+counters, distinct counts and pair overlaps do not move, and closed reporting
+periods are not silently restated.
+
 ### Settings — `STAPEL_VIDEO` namespace (`conf.py`)
 
 Resolution order per key: `settings.STAPEL_VIDEO[key]` -> flat Django setting ->
@@ -128,6 +239,10 @@ environment variable -> default. Read lazily at call time.
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `""` | tuning (default provider) |
 | `JOIN_TOKEN_TTL_SECONDS` | `3600` | tuning |
 | `EGRESS_S3_*` | `""` | tuning (default-provider egress store) |
+| `WEBHOOK_HANDLERS` | `{}` | **merge** over the builtins (`None` removes), guarded by E010; never read from env |
+| `PRESENCE_SWEEP_INTERVAL_SECONDS` | `60` | tuning — also the worst-case over-count of a lost departure |
+| `PRESENCE_SPAN_RETENTION_DAYS` | `400` | tuning (`None` = keep forever), guarded by W004 |
+| `PRESENCE_PURGE_SCHEDULE` | `{"hour": 4, "minute": 10}` | tuning (crontab kwargs); never read from env |
 
 `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and `DEFAULT_ADMIT_REQUIRED` are the
 three CTO-facing **config axes** (capability-config.md §16), surfaced in
@@ -147,9 +262,14 @@ forbidden shelf-wide.**
 
 ### Admin categories — `@access` declarations (admin-suite AS-5)
 
-Both models (`Room`, `RoomParticipant`) are `business` (visible,
-staff-manageable) and stay undecorated. `provider_room_ref` is an opaque
-provider room name, not a credential — neither model is `secret` or `ops`.
+`Room` and `RoomParticipant` are `business` (visible, staff-manageable) and
+stay undecorated. `provider_room_ref` is an opaque provider room name, not a
+credential — neither model is `secret` or `ops`.
+
+`ParticipantSpan` is registered **read-only** (no add, no change, no delete):
+it is a meter written by the ingest and the sweeper and summed into somebody's
+invoice, so a staffer editing a row by hand is a silent restatement of a
+closed period. Retention deletes spans; a person does not.
 
 ### Contract emission — the `schema` + `flows` + `errors` + `capabilities` quartet
 

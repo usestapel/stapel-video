@@ -79,12 +79,40 @@ DEFAULTS = {
     "EGRESS_S3_BUCKET": "",
     "EGRESS_S3_ACCESS_KEY": "",
     "EGRESS_S3_SECRET_KEY": "",
+    # ── Provider-webhook dispatch (MERGE registry) ────────────────────
+    # {event type: dotted path to handler(parsed: dict) -> None | None to
+    # remove a builtin}, merged OVER webhooks.BUILTIN_WEBHOOK_HANDLERS.
+    # NOT an import_string: entries are resolved per key by webhooks.py, so
+    # one broken path does not take the other handlers down with it, and
+    # None can tombstone a builtin. Adding `room_finished` is a settings
+    # line, not a fork of the ingress view.
+    "WEBHOOK_HANDLERS": {},
+    # ── Presence metering (spans) ─────────────────────────────────────
+    # How often the reconciler compares the open spans against the live
+    # roster the media server reports (seconds). This is the WORST-CASE
+    # over-count of a lost `participant_left`: a zombie span is closed at
+    # the last moment the sweeper confirmed the connection, so the error is
+    # bounded by one interval rather than by however long until somebody
+    # looked. Lower costs one ListParticipants per room with open spans.
+    "PRESENCE_SWEEP_INTERVAL_SECONDS": 60,
+    # Days a ParticipantSpan is kept before `purge_participant_spans`
+    # deletes it. 400 = a full year of reporting plus a quarter of slack for
+    # a late reconciliation or an audit. None = keep spans forever, which is
+    # a decision a host states rather than drifts into.
+    "PRESENCE_SPAN_RETENTION_DAYS": 400,
+    # Cadence of that purge (crontab kwargs) — configuration, not a literal.
+    "PRESENCE_PURGE_SCHEDULE": {"hour": 4, "minute": 10},
 }
 
 video_settings = AppSettings(
     "STAPEL_VIDEO",
     defaults=DEFAULTS,
     import_strings=("VIDEO_PROVIDER", "SCOPE_PROVIDER", "LIVE_ROOMS_PROVIDER"),
+    # Keys that must NOT fall back to an environment variable. AppSettings
+    # reads os.environ for every key not listed here and hands back the raw
+    # STRING, which for a registry or a schedule is not the type the reader
+    # expects — `WEBHOOK_HANDLERS="..."` would be iterated as characters.
+    no_env=("WEBHOOK_HANDLERS", "PRESENCE_PURGE_SCHEDULE"),
 )
 
 __all__ = ["video_settings", "DEFAULTS"]

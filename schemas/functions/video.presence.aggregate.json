@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.presence.aggregate",
+  "description": "Unioned presence time for ONE scope over a reporting period, computed from ParticipantSpan rows. Pass exactly one of user_id / room_key; passing both (or neither) is an error, because the two answer different questions. The window is a UTC calendar month via `period` (\"YYYY-MM\", half-open [start, end)), or an explicit period_start/period_end ISO pair. Response: {\"user_id\": string|null, \"room_key\": string|null, \"period_start\": string, \"period_end\": string, \"presence_seconds\": integer, \"rooms_count\": integer, \"users_count\": integer, \"spans_count\": integer}. presence_seconds is a UNION, never a sum: one person on a laptop and a phone was present once, and billing a second device as a second human is not defensible. For a room scope it is person-seconds inside that room (each attendee's merged timeline), not the room's wall clock. Spans still open are counted up to now, clipped to the window. No threshold is applied anywhere — the consumer owns that policy.",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "user_id": {
+      "type": ["string", "null"],
+      "description": "Scope: one person, across every room and device."
+    },
+    "room_key": {
+      "type": ["string", "null"],
+      "description": "Scope: one room, as the opaque key the spans were recorded under."
+    },
+    "period": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}$",
+      "description": "UTC calendar month, \"YYYY-MM\". Takes precedence over period_start/period_end."
+    },
+    "period_start": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window start (inclusive), for a reporting window that is not a calendar month."
+    },
+    "period_end": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window end (exclusive)."
+    }
+  },
+  "additionalProperties": false
+}

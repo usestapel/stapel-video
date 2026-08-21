@@ -36,6 +36,9 @@ jobs:
           pip install "stapel-tools>=0.9.1,<1" --quiet
           stapel-migration-lint . --strict
 
+      - name: emit-check (outbox atomicity gate, incl. EMIT005)
+        run: python -m stapel_core.lint.emit_check .
+
       - name: Import check
         run: python -c "import stapel_video; print('import OK')"
 

@@ -4,6 +4,129 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-08-22
+
+### Added — presence metering: the media server stops being the only one who knows
+
+A room was joinable, recordable and observable, and how long anybody spent in
+one was recorded nowhere. Not lost — never measured. `RoomParticipant` looks
+like it holds the answer and does not: it is unique per (room, user) forever,
+its `joined_at` is the first knock of a lifetime, and a grace-window return
+sets `left_at` back to NULL, physically destroying the interval that just
+ended. State and history are different tables, and only one of them can be
+summed.
+
+**`ParticipantSpan`** is the new one: `(room_key, user_id, connection_id,
+joined_at, left_at, close_reason)`, one row per connection's stay, append-only
+— a closed span is never reopened or restated, so a product's grace-window
+policy cannot silently rewrite a billing period. No ForeignKeys: `room_key` is
+opaque (a host that kept its own Room model meters through the same table) and
+`user_id` is a `CharField`, so erasure is a decision rather than a cascade.
+
+Three writers, in descending order of trust: the provider's
+`participant_joined` / `participant_left` webhooks, the sweeper, and the
+host's explicit `presence.close_spans_explicitly` (a leave button). Ingest is
+idempotent on `(connection_id, joined_at)` — **the provider's own join
+timestamp, never our receipt time** — so at-least-once, out-of-order delivery
+cannot double-count anybody, and a `participant_left` that overtakes its
+`participant_joined` materializes the whole closed span by itself.
+
+### Fixed — `parse_webhook` was throwing away everything that was not a recording
+
+It collapsed EVERY event into four egress keys, so `participant_joined`,
+`participant_left` and `room_finished` arrived at the URL, passed the
+signature check, and were dropped on the floor. The media server is the only
+witness of a departure that survives a closed laptop, a killed tab or a dead
+network — a browser sends nothing in exactly the cases a naive meter bills
+forever — and the normalizer was discarding it.
+
+`parse_webhook` now returns the whole normalized event: `event`, `event_id`,
+`event_ts`, `room`, `participant` (with the identity decomposed into
+`user_id` + `connection_id` by the provider that invented the convention in
+`mint_join_token`), plus the original four keys unchanged. Additive: the
+recording path is byte-identical and its tests were not touched.
+
+### Added — `WEBHOOK_HANDLERS`, a merge registry, replacing `if egress_ended`
+
+Dispatch was a hardcoded branch, so the only way to react to a second event
+was to fork the ingress or terminate the webhook in product code and
+re-implement signature verification there — the same fork by two routes. It is
+now the fleet's standard three-layer merge (`BUILTIN_WEBHOOK_HANDLERS` ←
+`STAPEL_VIDEO["WEBHOOK_HANDLERS"]` ← `register_webhook_handler`), `None`
+tombstones a builtin, and a broken entry is `stapel_video.E010` at boot rather
+than a 500 on a live webhook. An event nothing handles stays a quiet 200: a
+4xx would make the provider retry a delivery that was perfectly correct.
+
+### Added — `list_participants` on the provider contract, and a sweeper that uses it
+
+A webhook stream is at-least-once, which also means at-most-eventually: one
+dropped `participant_left` is a span with no end and a number that grows
+without bound, and no care in the ingest path can see a missing event. The
+repair needs a second, independent reading of the room, so the reading is a
+capability of the seam — a private method on one vendor's class is how a host
+ends up importing the vendor SDK (SWAP004).
+
+`presence.sweep_open_spans` confirms the connections the provider still
+reports, closes the zombies **at their last confirmed moment** (bounding the
+error to one sweep interval, not to however long until somebody looked), and
+opens spans for live connections whose join webhook never arrived — the one
+failure mode that is otherwise completely silent. `stapel_video.W003` fires
+when a host drives a beat schedule with no entry for it.
+
+### Added — three Query-Functions, raw seconds only
+
+| Function | Answer |
+|---|---|
+| `video.presence.aggregate` | unioned presence seconds for one person or one room over a period |
+| `video.presence.spans_export` | `{rows, cursor, total}` — the raw spans |
+| `video.presence.pairs_export` | `{rows, cursor, total}` — `(user_a, user_b, room_key, co_presence_seconds)` |
+
+- **Union, never sum.** A person on a laptop and a phone was present once.
+  Billing a second device as a second human is not a number anybody can
+  defend to the customer holding the invoice.
+- **No threshold, anywhere.** "More than 15 minutes counts" is the consumer's
+  policy and is revised per customer; an export that had already dropped the
+  short overlaps could not answer the revised question. Anonymous guests are
+  ordinary people here for the same reason — excluding them would price a
+  product by how few accounts a customer bothers to create.
+- **`{rows, cursor, total}`, never `{items}`.** Core's snapshot reader looks
+  for `rows` by name; an items-shaped answer rebuilds a consumer's projection
+  to EMPTY and reports success doing it.
+
+`pairs_export` is quadratic in a room's distinct attendees (a co-presence
+matrix has N²/2 cells: 435 pair evaluations for a 30-person meeting, ~125k for
+a 500-person webinar). Rooms are the batch boundary, so memory stays
+proportional to one room.
+
+### Added — retention, GDPR, and the jobs that make them real
+
+- `PRESENCE_SPAN_RETENTION_DAYS` (400 — a year of reporting plus slack),
+  `manage.py video_purge_spans`, and `stapel_video.W004` when a beat schedule
+  has no entry for it. Keyed on `joined_at`, so a span still open past the
+  horizon goes too: that is a row the reconciler never reached, not a very
+  long call. This module keeps no rollup table on purpose — the aggregate is
+  computed from spans every time, which is the only way it stays correct
+  while the sweeper is still closing yesterday's zombies.
+- `get_video_beat_schedule()` wires both jobs; celery stays optional, and both
+  are plain callables with management-command forms.
+- **Erasure pseudonymizes the meter instead of deleting it.** A span holds no
+  text to scrub, so what is personal about it is the `user_id` column; it
+  becomes a keyed digest, which removes the person and leaves the counters,
+  distinct counts and pair overlaps exactly where they were. Deleting the rows
+  would silently restate closed reporting periods — and the question the
+  export answers is "who was in a call during the period", not "whose account
+  still exists".
+- `ParticipantSpan` is read-only in the admin: a meter summed into an invoice
+  is not a table a staffer edits by hand.
+
+### Notes
+
+Migration `0002_participantspan` is pure expand — one CREATE TABLE, no column
+dropped, no row rewritten. A deployment that never turns the provider webhooks
+on simply keeps an empty table. `docs/llms.txt` moves to a deliberate
+5000-token budget (the stapel-calendar precedent) rather than compressing the
+new surface entries into clauses.
+
 ## [0.5.1] — 2026-08-16
 
 ### Fixed — E009 measured configuration where it meant to measure a hole

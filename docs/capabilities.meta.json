@@ -1,7 +1,7 @@
 {
-  "_comment": "Hand-curated layer of docs/capabilities.json (capability-config.md §2 p.3). The emitter (stapel_video/_capabilities.py) merges this over the derived axes. Video exposes THREE CTO-facing config axes — VIDEO_PROVIDER (which vendor runs the calls), DEFAULT_ACCESS_LEVEL and DEFAULT_ADMIT_REQUIRED (how open a fresh room is). Keep language business-facing — it surfaces in CTO conversations, not in code. The `surface` section (stapel_tools.surface) is the third one: not what a product configures or replaces, but what it must CALL — the room lifecycle, the admission decision and the two seam proxies (recording egress, lobby fan-out) that a product otherwise re-implements against the video vendor directly. surface_roots select the symbols; every selected symbol MUST carry an intent line here or emission fails naming it.",
+  "_comment": "Hand-curated layer of docs/capabilities.json (capability-config.md §2 p.3). The emitter (stapel_video/_capabilities.py) merges this over the derived axes. Video exposes THREE CTO-facing config axes — VIDEO_PROVIDER (which vendor runs the calls), DEFAULT_ACCESS_LEVEL and DEFAULT_ADMIT_REQUIRED (how open a fresh room is). Keep language business-facing — it surfaces in CTO conversations, not in code. The `surface` section (stapel_tools.surface) is the third one: not what a product configures or replaces, but what it must CALL — the room lifecycle, the admission decision, the two seam proxies (recording egress, lobby fan-out) and the presence meter, all of which a product otherwise re-implements against the video vendor directly. surface_roots select the symbols; every selected symbol MUST carry an intent line here or emission fails naming it.",
   "maturity": "alpha",
-  "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), and a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event, never by import.",
+  "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them.",
   "requires": [
     {
       "module": "stapel-core",
@@ -41,6 +41,36 @@
       "summary": "The recording seam: when a room recording finishes, the module emits this event carrying the storage key — stapel-recordings (or any subscriber) finalizes the upload. This library ships no recording pipeline and imports no recordings model."
     },
     {
+      "name": "WEBHOOK_HANDLERS",
+      "kind": "merge_registry",
+      "summary": "Which provider webhook events this deployment reacts to ({event: dotted-path | None to remove}, merged over the built-in egress and participant handlers). Adding a reaction to a room finishing, or replacing how a departure is recorded, is a settings line — not a fork of the webhook ingress, and never a second place where the provider's signature has to be verified."
+    },
+    {
+      "name": "video.participant.joined",
+      "kind": "comm_event",
+      "summary": "Somebody's connection joined a call. Ids and timestamps only, on the media server's clock — the opening half of a presence span, for a host that wants to react live rather than read the meter later."
+    },
+    {
+      "name": "video.participant.left",
+      "kind": "comm_event",
+      "summary": "Somebody's connection left a call, with the finished interval and how we learned of it (the media server observed it, the person said so, or the sweeper reconciled it). The closing half of a presence span."
+    },
+    {
+      "name": "video.presence.aggregate",
+      "kind": "comm_function",
+      "summary": "How long one person — or one room — was actually in calls over a reporting period. Time is unioned, so a laptop and a phone are one person present, not two."
+    },
+    {
+      "name": "video.presence.spans_export",
+      "kind": "comm_function",
+      "summary": "The raw presence intervals, cursor-paged as {rows, cursor, total}. The feed an external billing or analytics service reads: full durations, no threshold applied, so the consumer's pricing rules can change without a release here."
+    },
+    {
+      "name": "video.presence.pairs_export",
+      "kind": "comm_function",
+      "summary": "Who actually spent time in a call with whom, as one row per pair per room with the raw overlap in seconds. The answer to \"how many real conversation partners did this customer have this month\", with the \"real\" threshold left to whoever asks."
+    },
+    {
       "name": "serializer_seams",
       "kind": "class_override",
       "summary": "Every view declares request/response serializer seams (SerializerSeamMixin) — subclass the view, override the attribute, remount the URL."
@@ -71,6 +101,14 @@
     {
       "select": "functions",
       "path": "realtime.py"
+    },
+    {
+      "select": "functions",
+      "path": "presence.py"
+    },
+    {
+      "select": "functions",
+      "path": "tasks.py"
     }
   ],
   "surface": {
@@ -132,6 +170,68 @@
     "lobby_group": {
       "kind": "factory",
       "intent": "The Channels group name for a room's lobby. Call it from any consumer or fan-out of your own so your messages land in the group the shipped LobbyConsumer actually joined — the format is not part of the API, and a hand-written f-string stops matching silently the day it changes."
+    },
+    "handle_participant_joined": {
+      "kind": "gate_function",
+      "intent": "The built-in reaction to the media server's participant_joined webhook: open a presence span on the PROVIDER's join timestamp. Registered by default; name it in WEBHOOK_HANDLERS only to wrap it. Reading the event yourself is how the join time becomes 'when our queue got round to it'."
+    },
+    "handle_participant_left": {
+      "kind": "gate_function",
+      "intent": "The built-in reaction to participant_left — the one departure signal that survives a closed laptop. Closes the open span, or materializes the whole stay when the pair arrived out of order. Deduplicates on (connection_id, joined_at), which is what makes at-least-once delivery harmless."
+    },
+    "open_span": {
+      "kind": "factory",
+      "intent": "Record a connection's stay idempotently — for a host feeding presence from something other than the shipped webhook path. A hand-written row skips the dedupe key, so a redelivery becomes a second billable stay.",
+      "instead_of": [
+        "stapel_video.models.ParticipantSpan.objects.create"
+      ]
+    },
+    "close_span": {
+      "kind": "gate_function",
+      "intent": "End one open span, clamped to be no earlier than its start. A conditional update, so an already-closed span stands and two racing closers resolve to the first — append-only enforced by the database, not by every caller remembering it.",
+      "instead_of": [
+        "stapel_video.models.ParticipantSpan.save"
+      ]
+    },
+    "close_spans_explicitly": {
+      "kind": "gate_function",
+      "intent": "The host's leave button and kick path: close what this person still has open in this room. Deliberately weak — never reopens or re-dates, so a grace-window policy stays a product policy and a return opens a new span."
+    },
+    "sweep_open_spans": {
+      "kind": "gate_function",
+      "intent": "Reconcile open spans against the provider's live roster: confirm who is there, close zombies at their last confirmed moment, open spans for connections whose join webhook was lost. A deployment that meters without it is metering an upper bound, not a duration."
+    },
+    "presence_aggregate": {
+      "kind": "factory",
+      "intent": "Unioned presence seconds for one person or one room over a window, in-process — the same computation video.presence.aggregate exposes on the bus, without the round trip. Summing span durations yourself double-counts anybody on two devices."
+    },
+    "spans_export": {
+      "kind": "factory",
+      "intent": "The cursor-paged raw-span snapshot ({rows, cursor, total}) behind video.presence.spans_export. Keyset paging over (joined_at, id) is what lets a full walk finish exactly once while the sweeper is still closing rows."
+    },
+    "pairs_export": {
+      "kind": "factory",
+      "intent": "The cursor-paged co-presence matrix: one row per pair per room with the raw overlap in seconds. Quadratic in a room's attendees, so rooms are the batch boundary — not arithmetic to re-derive from the span export by hand."
+    },
+    "period_bounds": {
+      "kind": "factory",
+      "intent": "\"2026-08\" to the half-open UTC calendar month. Use it wherever a report names a month, so a span ending at midnight on the 1st lands in one month and not in both."
+    },
+    "pseudonymize_user": {
+      "kind": "gate_function",
+      "intent": "Erase a person from the meter without destroying the meter: their user_id becomes a keyed digest, so counters and pair overlaps do not move. Already wired into the GDPR provider; deleting the spans instead silently restates closed periods."
+    },
+    "sweep_presence": {
+      "kind": "gate_function",
+      "intent": "The schedulable form of the sweeper — a plain callable for cron, a Celery task where celery is installed. Nothing else closes a span whose departure webhook was lost."
+    },
+    "purge_presence_spans": {
+      "kind": "gate_function",
+      "intent": "The schedulable form of span retention (400 days by default). A retention window nothing runs is a number in a settings file, and stapel_video.W004 says so at boot."
+    },
+    "get_video_beat_schedule": {
+      "kind": "factory",
+      "intent": "Both scheduled jobs as beat entries on the configured cadences — merge into CELERY_BEAT_SCHEDULE instead of hand-writing task paths, which is how a renamed task becomes a job that silently stopped."
     },
     "notify_lobby": {
       "kind": "gate_function",

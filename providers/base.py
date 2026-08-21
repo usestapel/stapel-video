@@ -168,10 +168,92 @@ class VideoProvider(ABC):
     def parse_webhook(self, body: bytes, auth_header: str) -> dict:
         """Verify + decode a provider webhook. Returns a normalized dict::
 
-            {"event": str, "egress_id": str | None,
-             "status": str | None, "storage_key": str | None}
+            {"event": str,
+             "event_id": str | None,          # the provider's own event id
+             "event_ts": datetime | None,     # the PROVIDER's clock, not ours
+             "room": {"name": str, "sid": str} | None,
+             "participant": {"identity": str, "user_id": str,
+                             "connection_id": str, "name": str,
+                             "joined_at": datetime | None} | None,
+             "egress_id": str | None,
+             "status": str | None,
+             "storage_key": str | None}
+
+        The four egress keys came first and are unchanged; everything above
+        them was added in 0.6.0. Until then this method collapsed EVERY event
+        into those four, so ``participant_joined`` / ``participant_left`` /
+        ``room_finished`` arrived, verified, and were dropped on the floor —
+        the media server is the only witness of a departure that survives a
+        client crash, and the normalizer was throwing it away. A provider
+        answers with what the event actually carried and ``None`` for the
+        rest; a caller reads the keys its handler needs.
+
+        ``event_ts`` and ``participant["joined_at"]`` are **the provider's
+        server timestamps**, timezone-aware, never the moment we received the
+        POST: webhooks are retried, queued and reordered, so receipt time is a
+        measure of our own delivery path and not of anybody's presence.
+
+        ``participant`` carries the raw ``identity`` AND its decomposition,
+        because the provider is the one that invented the convention in
+        :meth:`mint_join_token` (see :func:`split_identity`). A caller that
+        re-parses an identity string is a caller that has forked the provider.
 
         Raise :class:`VideoProviderError` if the signature is invalid or the
         body is malformed — the ingress endpoint turns that into a 400.
         """
         raise NotImplementedError
+
+    # ── Live roster ────────────────────────────────────────────────────
+
+    def list_participants(self, provider_room_ref: str) -> list[dict] | None:
+        """Who the media server says is connected to this room RIGHT NOW.
+
+        Returns one dict per live connection in the same normalized shape
+        ``parse_webhook`` puts under ``participant`` (``identity``,
+        ``user_id``, ``connection_id``, ``name``, ``joined_at``), or ``None``
+        when the room does not exist on the provider — media rooms are
+        typically lazy, so "nobody is in there" and "no such room" are the
+        same fact and ``None`` says it once. An empty list means the room
+        exists and is empty.
+
+        This is on the contract because a webhook stream is at-least-once and
+        at-most-eventually: a dropped ``participant_left`` leaves a presence
+        record open forever, and only a second, independent reading of the
+        room can close it. The repair loop
+        (``stapel_video.presence.sweep_open_spans``) is a fleet-level
+        capability, so the reading it needs has to be a capability of the
+        seam rather than a private method one vendor's class happens to have
+        — a private one means the host reaches for the vendor SDK, which is
+        how a provider layer gets forked (SWAP004).
+
+        Default ``NotImplementedError``: a token-only backend stays valid and
+        the sweeper reports that this provider cannot be reconciled, rather
+        than pretending every open span is alive.
+        """
+        raise NotImplementedError
+
+
+def split_identity(identity: str) -> tuple[str, str]:
+    """Decompose a minted connection identity into ``(user_id, connection_id)``.
+
+    The convention is ``{user_id}_{client_session_id}`` (see
+    :meth:`VideoProvider.mint_join_token`): one person on a laptop and a phone
+    is one ``user_id`` and two ``connection_id``s, which is exactly the
+    granularity presence metering needs — time is unioned per user, but a
+    connection is what joins and leaves.
+
+    The separator is part of the split, and only the FIRST one counts: a
+    ``client_session_id`` may itself contain underscores, a user id (a UUID)
+    does not. An identity minted before the convention existed carries no
+    separator at all; it is its own connection, which is what the bare
+    equality arm of ``providers.livekit._mine`` already assumes.
+
+    Lives on the base module rather than in the LiveKit class because the
+    convention is declared by the ABC, and the ingest path decomposes
+    identities that any provider minted.
+    """
+    identity = str(identity or "")
+    user_id, sep, connection_id = identity.partition("_")
+    if not sep:
+        return identity, identity
+    return user_id, connection_id

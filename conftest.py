@@ -45,9 +45,8 @@ def auth_client(api_client, user):
     return api_client
 
 
-@pytest.fixture
-def captured_events():
-    """Subscribe to video emits (in-process) and collect the Event envelopes.
+def _collect(topics):
+    """Subscribe to *topics* (in-process) and collect the Event envelopes.
     Delivery is synchronous with OUTBOX disabled, so the list is populated by
     the time emit() returns."""
     from stapel_core.comm import action_registry, subscribe_action
@@ -57,10 +56,35 @@ def captured_events():
     def _handler(event):
         collected.append(event)
 
-    subscribe_action("video.egress_ended", _handler)
+    for topic in topics:
+        subscribe_action(topic, _handler)
     try:
         yield collected
     finally:
-        handlers = action_registry._subscribers.get("video.egress_ended", [])
-        if _handler in handlers:
-            handlers.remove(_handler)
+        for topic in topics:
+            handlers = action_registry._subscribers.get(topic, [])
+            if _handler in handlers:
+                handlers.remove(_handler)
+
+
+@pytest.fixture
+def captured_events():
+    yield from _collect(["video.egress_ended"])
+
+
+@pytest.fixture
+def presence_events():
+    """Every presence fact this module emits, in order."""
+    yield from _collect(["video.participant.joined", "video.participant.left"])
+
+
+@pytest.fixture(autouse=True)
+def _clean_provider_state():
+    """The FakeProvider keeps its call log and its fake roster on the CLASS
+    (tests read it without owning the instance the seam built), so a leftover
+    room roster would make the sweeper's behaviour depend on test order."""
+    from stapel_video.tests.fakeprovider import FakeProvider
+
+    FakeProvider.live = {}
+    yield
+    FakeProvider.live = {}
