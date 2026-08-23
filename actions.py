@@ -10,19 +10,15 @@ from stapel_core.comm import on_action
 logger = logging.getLogger(__name__)
 
 
-@on_action("user.deleted")
-def handle_user_deleted(event):
-    """Erase this module's PII when an account deletion is executed: rooms the
-    user created (and their participants) and the user's participations in
-    other rooms."""
-    from .gdpr import VideoGDPRProvider
-
-    user_id = event.payload.get("user_id")
-    if not user_id:
-        logger.error("user.deleted event without user_id: %s", event.event_id)
-        return
-    VideoGDPRProvider().delete(user_id)
-    logger.info("video data erased for deleted user %s", user_id)
+# The GDPR erasure protocol is NOT subscribed here. Since 0.8.0 this module
+# registers as a stapel-gdpr data owner from ``apps.ready()`` and
+# ``stapel_core.gdpr.register_gdpr_owner`` subscribes all three actions —
+# ``gdpr.erasure.requested`` (erase + receipt), ``gdpr.owner.probe``
+# (``gdpr.owner.alive`` answered from the SAME subscriber, which is what makes
+# the answer evidence that the erasure path is consumed) and the deprecated
+# ``user.deleted``, which used to be handled here. All three run
+# :func:`stapel_video.erasure.erase_subject`; a second handler for
+# ``user.deleted`` would be a second erasure to keep in step.
 
 
 @on_action("profile.changed")

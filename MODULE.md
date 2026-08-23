@@ -330,6 +330,56 @@ The participants listing uses stapel-core's `AnchorPagination`
 (`anchor`/`limit`/`direction`, FIFO by `joined_at`) — **limit/offset is
 forbidden shelf-wide.**
 
+### Erasure (GDPR Art. 17) — this module is a data owner
+
+`stapel_video.erasure.erase_subject(subject_type, subject_key,
+workspace_id=None)` is the whole erasure, and everything else is a caller:
+
+| Caller | Reached how |
+|---|---|
+| `VideoGDPRProvider.delete()` | the in-process registry the orchestrator walks in a monolith |
+| `gdpr.erasure.requested` subscriber | `stapel_core.gdpr.register_gdpr_owner("video", ["account"], erase_subject)` in `apps.ready()` |
+| `gdpr.owner.probe` subscriber | same registration — it answers `gdpr.owner.alive {owner: "video", subject_types: ["account"]}` |
+| `user.deleted` subscriber | same registration (deprecated; stapel-gdpr drops it in 0.6.0) |
+
+The protocol is **not** written here: core owns the deterministic
+`receipt_id`, the receipt inside the erase's transaction, the silence for an
+unclaimed subject and the logged drop for a malformed payload. This library
+owns only what is its own — the rows, idempotently, counted.
+
+**Owner name** `video` (= `VideoGDPRProvider.section`; a host lists it in
+`STAPEL_GDPR["DATA_OWNERS"]`). **Subject types** `["account"]` only:
+`scope_key` and `room_key` are opaque strings a host's scope provider
+computes, not workspace or meeting ids a scoped erasure could match on —
+claiming those types would mint a receipt for work nobody could have done.
+
+**Counts** `{rooms, participations, presence_spans}`.
+
+- `rooms` — rooms the subject hosted, hard-deleted (cascading to their
+  participant rows).
+- `participations` — the subject's admissions to *other* people's rooms;
+  those rooms survive for their hosts.
+- `presence_spans` — rows **pseudonymized, not removed**. This module carries
+  a ledger and the fleet's rule for one is scrub the person, keep the
+  counters: `presence.pseudonymize_user` rewrites `ParticipantSpan.user_id`
+  to a stable keyed digest (`erased:…`), so a closed reporting period counts
+  the same seconds, one subject stays one subject (distinct counts and pair
+  overlaps do not move), and nothing reversible is left. Deleting the rows
+  would silently restate invoices. This is why `ParticipantSpan.user_id` is a
+  `CharField` and not an FK — see §6. **The count is rows touched**, and the
+  receipt means "made unattributable", not "deleted".
+
+**Why the probe matters.** Before 0.8.0 this module registered a
+`GDPRProvider` and shipped no probe subscriber, so an owners-health board
+reported `video: alive=false` forever and a fleet's erasure waited on this
+owner until it timed out — while the monolith path erased perfectly well.
+Liveness is answered by the subscriber that erases or it is evidence of
+nothing.
+
+**Comm surface of the protocol.** Consumes `gdpr.erasure.requested`,
+`gdpr.owner.probe`, `user.deleted` (deprecated); emits `gdpr.section.erased`,
+`gdpr.owner.alive`. Contracts in `schemas/consumes/` and `schemas/emits/`.
+
 ### Admin categories — `@access` declarations (admin-suite AS-5)
 
 `Room` and `RoomParticipant` are `business` (visible, staff-manageable) and

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.7.0"
+version = "0.8.0"
 description = "Video calls (rooms, lobby admission, presence metering, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,10 +24,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # Floor: 0.27.0 ships django/scope.py — MandateScopeMixin and
-    # check_shipped_scope_provider, which `is_member` and the system checks are
-    # built on. (The `owner` field in docs/errors.json arrived in 0.26.0.)
-    "stapel-core>=0.30.0,<1.0",
+    # Floor: 0.35.0 ships stapel_core.gdpr.register_gdpr_owner — the whole
+    # erasure protocol (requested -> erase -> receipt, probe -> alive, the
+    # deprecated user.deleted) that apps.ready() hands one callable to.
+    # (0.27.0 had brought django/scope.py — MandateScopeMixin and
+    # check_shipped_scope_provider, which `is_member` and the system checks
+    # are built on.)
+    "stapel-core>=0.35.0,<1.0",
 ]
 
 [project.urls]

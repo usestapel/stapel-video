@@ -1,8 +1,12 @@
-"""GDPR data handler for stapel-video.
+"""The Art. 15 export, and the registry seam onto the Art. 17 erasure.
 
-This module holds user PII: ``Room.created_by`` and ``RoomParticipant.user``.
-Per the Stapel standard, a data-holding module subscribes to ``user.deleted``
-and erases that data.
+The erasure itself is not here: it lives in :mod:`stapel_video.erasure`, as
+one function the in-process registry (below) and the comm subscribers
+registered in ``apps.ready()`` both reach. Two callers, one implementation —
+a monolith and a fleet erase the same rows the same way, and there is no
+second erasure to drift.
+
+What it does, unchanged by the move:
 
 - Rooms the user created are hard-deleted (cascading to their participant
   rows). A room carries no third-party PII worth retaining once its host is
@@ -21,6 +25,8 @@ and erases that data.
   table with no content needs it.
 """
 from stapel_core.gdpr import GDPRProvider
+
+from .erasure import erase_subject
 
 
 class VideoGDPRProvider(GDPRProvider):
@@ -59,17 +65,16 @@ class VideoGDPRProvider(GDPRProvider):
         }
 
     def delete(self, user_id) -> None:
-        from .models import Room, RoomParticipant
-        from .presence import pseudonymize_user
+        """Erase the subject — the same operation the comm path runs.
 
-        # Rooms the user created cascade to their participant rows.
-        Room.objects.filter(created_by_id=user_id).delete()
-        # Attendance in other users' rooms is this user's PII — remove it.
-        RoomParticipant.objects.filter(user_id=user_id).delete()
-        # The meter keeps its arithmetic and loses the person (see the module
-        # docstring). ParticipantSpan.user_id is a CharField precisely so this
-        # is a decision here and not a cascade nobody chose.
-        pseudonymize_user(user_id)
+        The registry reaches the erasure here; the
+        ``gdpr.erasure.requested`` subscriber registered in ``apps.ready()``
+        reaches it there. A host that runs both in one process erases once:
+        whichever path arrives second finds nothing left to match and
+        receipts its zeroes, and this one receipts nothing at all — the
+        orchestrator records the local pass itself.
+        """
+        erase_subject("account", user_id)
 
     def anonymize(self, user_id) -> None:
         from .presence import pseudonymize_user

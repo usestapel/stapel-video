@@ -4,6 +4,66 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-08-24
+
+### Fixed — the erasure answers its probe: stapel-video registers as a GDPR data owner
+
+Found on a live stand: this module was a **declared** data owner that
+answered no `gdpr.owner.probe`. Its `VideoGDPRProvider` was registered
+in-process and its `user.deleted` handler really did erase, so a monolith
+looked fine — and a fleet's owners-health said `video: alive=false` forever,
+and every erasure request waited on this owner until it timed out. Liveness
+is answered by the subscriber that erases, and there was none to answer.
+
+`apps.ready()` now hands one callable to `stapel_core.gdpr.register_gdpr_owner`
+and core subscribes the whole protocol: `gdpr.erasure.requested` ->
+`gdpr.section.erased` (deterministic `receipt_id`, receipt emitted inside the
+erase's transaction), `gdpr.owner.probe` -> `gdpr.owner.alive` from the same
+module, and the deprecated `user.deleted`. **No protocol code is written
+here.**
+
+- **Owner** `video` (= `VideoGDPRProvider.section`), **subject types**
+  `["account"]` — `scope_key` and `room_key` are opaque host-computed
+  strings, not workspace or meeting ids a scoped erasure could match on.
+- **Counts** `{rooms, participations, presence_spans}`. **The erasure
+  discipline is unchanged**: rooms the subject hosted are hard-deleted
+  (cascading to their participant rows), their admissions to other people's
+  rooms are removed, and the meter is **pseudonymized, not deleted** —
+  `presence.pseudonymize_user` rewrites `ParticipantSpan.user_id` to the
+  stable keyed digest it always did, so a closed reporting period counts the
+  same seconds and one subject stays one subject. `presence_spans` counts
+  rows **touched**: the receipt means "made unattributable", not "deleted".
+  `ParticipantSpan` semantics are untouched by this release.
+- Idempotent — a redelivery receipts its zeroes (a span already carrying an
+  `erased:` id is never pseudonymized twice) and mints the same `receipt_id`.
+- New `stapel_video/erasure.py`: `OWNER`, `SUBJECT_TYPES`,
+  `erase_subject(subject_type, subject_key, workspace_id=None)`. The
+  in-process provider and all three subscribers reach this one counted
+  function, so a monolith and a fleet erase the same rows the same way.
+
+### Removed — `stapel_video.actions.handle_user_deleted`
+
+**Breaking** (pre-1.0: minor = breaking) for anyone importing that handler
+directly. The signal is still consumed — by the subscriber
+`register_gdpr_owner` installs, running the same `erase_subject("account",
+…)` — and it now also emits the `gdpr.section.erased` receipt the old handler
+never sent. Two handlers for one signal is two erasures to keep in step.
+`handle_profile_changed` is untouched.
+
+### Changed — `stapel-core` floor raised to 0.35.0
+
+`stapel_core.gdpr.register_gdpr_owner` exists only in 0.35.0.
+
+### Added — comm contracts for the protocol
+
+`schemas/consumes/gdpr.erasure.requested.json`,
+`schemas/consumes/gdpr.owner.probe.json`, `schemas/emits/gdpr.owner.alive.json`,
+`schemas/emits/gdpr.section.erased.json`. `schemas/consumes/user.deleted.json`
+loses its `format: uuid` on `user_id` — a host's user pk is an integer as
+often as a UUID, and the erasure takes both spellings as they come.
+
+No new settings; `CONFIG.MD` is unchanged.
+
 ## [0.7.0] — 2026-08-23
 
 ### Added — the dimension the meter did not have: `scope_key`

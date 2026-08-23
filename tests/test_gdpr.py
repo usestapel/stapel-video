@@ -1,4 +1,9 @@
-"""GDPR: user.deleted erases created rooms + participations."""
+"""GDPR: the Art. 15 export and the provider seam onto the erasure.
+
+The erasure protocol itself — probe, receipt, idempotence, the meter that is
+pseudonymized rather than deleted — lives in ``test_gdpr_owner.py``, beside
+the one function every caller reaches.
+"""
 import pytest
 
 from stapel_video import services
@@ -31,15 +36,3 @@ def test_export_shape(user):
     assert "created_rooms" in data
     assert "participations" in data
     assert len(data["created_rooms"]) == 1
-
-
-def test_user_deleted_action_erases(user):
-    from types import SimpleNamespace
-
-    from stapel_video.actions import handle_user_deleted
-
-    services.create_room(user, access_level="public")
-    handle_user_deleted(
-        SimpleNamespace(payload={"user_id": str(user.id)}, event_id="e1")
-    )
-    assert not Room.objects.filter(created_by=user).exists()
