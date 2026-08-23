@@ -4,6 +4,128 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-08-23
+
+### Added — the dimension the meter did not have: `scope_key`
+
+0.6.0 could answer "how long was this person in calls" and "how long was this
+room in use". It could not answer **"how long did the people in THIS workspace
+talk"** — there was no tenant on a span, so a host wanting that number had two
+choices, and both were bad: join the span table to its own rooms and
+re-implement the union arithmetic beside the table that already owns it, or
+read the instance-wide export and filter. The first produces a second answer
+to "how long was this person present" that nobody reconciles against the
+invoice until a customer disputes it; the second cannot be shown to a
+customer at all.
+
+**`ParticipantSpan.scope_key`** is that dimension: an opaque, host-chosen
+partition key (`null`, never `""` — a host that partitions nothing writes no
+scope, and an empty-string scope would be a tenant the report invented).
+Migration `0003` is pure expand — one nullable column and one
+`(scope_key, joined_at)` index, no data touched.
+
+It arrives on the **join grant**, because that is the only moment the answer
+is in the process: a `participant_joined` webhook names a room and a person
+and never says which tenant the room belongs to, and the code that minted the
+token is the one that knew. `mint_join_token(..., scope_key=...)` puts it in
+the provider's per-connection metadata, the provider echoes it back on every
+webhook and every roster read, and the presence writer copies it onto the
+span. The sweeper's repair path reads the same echo, so a span it opens for a
+lost `participant_joined` is not the one unscoped row in a tenant's month.
+
+Only rows the ingest **creates** are stamped. The span is append-only, and a
+redelivery carrying a different scope must not silently move a recorded stay
+from one tenant's invoice to another's.
+
+### Added — `manage.py video_backfill_scope --resolver <dotted path>`
+
+History is the host's to place: a span holds an opaque `room_key`, and which
+partition that room belonged to is a fact this library has never been told. So
+the backfill takes the host's callable (`room_key -> scope_key | None`) and
+runs it over the spans that have no scope, batched.
+
+Idempotent and resumable by construction rather than by bookkeeping — the
+population is *defined* as `scope_key IS NULL`, so every stamped row leaves
+it: a crashed run resumes exactly where it stopped and a second full run does
+nothing. A resolver answering `None` leaves those spans unscoped (some rooms
+genuinely belong to no tenant) and the count is reported, because a resolver
+pointed at the wrong table answers `None` for everything too.
+
+### Added — `video.presence.usage_rollup` / `usage_rollup_by_month`
+
+One partition's window, one row per person: `presence_seconds`, `rooms`,
+`connections`, `first_seen`, `last_seen`. Deliberately the **same code path**
+as `presence.aggregate` (`_clip` / `_merge_intervals`), because two
+implementations of "how long was this person present" is two numbers.
+`rooms` counts distinct `room_key`s, not spans — somebody who reconnected nine
+times to one call attended one call, and the reconnects are reported
+separately as `connections` so a support question has an answer in the data.
+
+`usage_rollup_by_month(scope_key, months, tz)` cuts that into calendar months
+**in the caller's zone**, newest first. Boundaries are LOCAL midnight, so a
+month crossing a daylight-saving change is genuinely 743 or 745 hours: a
+report titled "March" must neither swallow the hour that belongs to April nor
+drop the one that belongs to March. The stored instants never move, so the
+same spans re-cut into another zone's calendar without a migration. An empty
+month is present with `users: []` — "no calls" and "this row failed to load"
+must not look the same. `months` is clamped to 36, because the walk is linear
+in every bucket and the parameter is reachable from a query string.
+
+### Added — `GET /video/api/v1/scopes/{scope_key}/usage/`, gated on a mandate in that scope
+
+`?months=6&tz=Europe/Berlin`, or `?month=YYYY-MM` for one. **Not `IsStaff`**:
+the audience is a workspace's own owner or admin reading their own people's
+minutes, and a staff gate would mean the only accounts able to see a
+customer's numbers belong to the vendor.
+
+Two gates, in order. First `HasWorkspaceMandateIfScoped` — the same core gate
+stapel-calendar 0.5.0 put on its by-id reads: anonymous refused everywhere,
+the guest state refused where it exists, a standalone deployment admitted, and
+"could not ask" answered **503** rather than as a verdict about the caller.
+Then the per-scope question, which nothing in core can answer: the caller must
+hold `STAPEL_VIDEO["USAGE_MANDATE"]` (default `video.usage.read`) **in the
+scope named in the URL**, resolved through the workspaces access registry.
+Holding a mandate *somewhere* is not authority over a workspace id somebody
+typed into a URL.
+
+The refusal is **404, uniformly** — the same answer for a scope that does not
+exist, one that belongs to somebody else, and one with no calls the caller may
+not see. A 403 would confirm that a guessed tenant id is real, and the key
+here *is* the host's tenant id. A scope the caller may read with no calls in
+it is a 200 with empty months: once the registry has said yes, "no calls" is a
+real answer and must not read as a permissions bug.
+
+Declared `stapel_anonymous_access = ANONYMOUS_DENIED`; throttled from this
+module's own namespace (`USAGE_THROTTLE`, `60/min`, scope
+`video-scope-usage`) rather than by writing into the project's
+`DEFAULT_THROTTLE_RATES`. Rows carry user **ids** — this library never learns
+anybody's display name, and the host resolves it from the roster it has.
+
+### Breaking (pre-1.0: minor = breaking)
+
+- **`VideoProvider.mint_join_token` gains a `scope_key` kwarg.** An
+  out-of-tree provider must accept it — the library's own call site passes it
+  — and should echo it back in `parse_webhook` / `list_participants`, or every
+  span that provider produces is unscoped and the usage read reports an empty
+  workspace. The shipped LiveKit provider and the test fake carry it.
+- **`ParticipantSpan` gains a column** (migration `0003`, additive) and
+  `video.presence.spans_export` rows gain `scope_key`. A reader keyed on the
+  existing fields is unaffected.
+- New system check **`stapel_video.E011`**: `USAGE_AUTHORIZER` unimportable or
+  not callable.
+
+### Configuration
+
+| Key | Default | What |
+|---|---|---|
+| `USAGE_MANDATE` | `video.usage.read` | capability required **in the scope asked about** |
+| `USAGE_AUTHORIZER` | `…usage.staff_only_authorizer` | the gate where there are no workspaces to ask |
+| `USAGE_THROTTLE` | `60/min` | rate for the `video-scope-usage` throttle scope |
+
+The llms.txt budget rises 5000 → 6000: six new surface entries, two new comm
+Functions and a new seam, raised deliberately rather than by compressing the
+intent lines an agent reads to avoid rebuilding a mechanism that exists.
+
 ## [0.6.0] — 2026-08-22
 
 ### Added — presence metering: the media server stops being the only one who knows

@@ -99,5 +99,7 @@ def test_the_avatar_travels_with_the_name(auth_client, user, other_user):
         reverse("video-room-join", args=[room.join_code]), {}, format="json"
     )
 
-    assert len(FakeProvider.mints[0]) == 5  # (ref, user_id, name, avatar, session)
+    # (ref, user_id, name, avatar, session, scope_key) — the last one arrived
+    # in 0.7.0 and is the reporting partition, not part of this claim.
+    assert len(FakeProvider.mints[0]) == 6
     assert FakeProvider.mints[0][3] == ""  # no avatar on this user model

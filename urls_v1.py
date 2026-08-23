@@ -16,6 +16,7 @@ from .views import (
     RoomJoinView,
     RoomListCreateView,
     RoomParticipantsView,
+    ScopeUsageView,
     WebhookIngressView,
 )
 
@@ -45,6 +46,15 @@ urlpatterns = [
         "rooms/<str:join_code>/lobby/deny",
         LobbyDenyView.as_view(),
         name="video-lobby-deny",
+    ),
+    # The per-partition usage read. Trailing slash on purpose: the segment
+    # after it is a report NAME, and the next report this scope grows
+    # (`.../usage/export`) has to be able to sit next to it without the
+    # router reading it as part of an opaque key.
+    path(
+        "scopes/<str:scope_key>/usage/",
+        ScopeUsageView.as_view(),
+        name="video-scope-usage",
     ),
     path("webhook", WebhookIngressView.as_view(), name="video-webhook"),
 ]

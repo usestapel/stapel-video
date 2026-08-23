@@ -10,7 +10,7 @@
 [![license](https://img.shields.io/github/license/usestapel/stapel-video)](https://github.com/usestapel/stapel-video/blob/main/LICENSE)
 [![llms.txt](https://img.shields.io/badge/llms.txt-blue)](https://github.com/usestapel/stapel-video/blob/main/docs/llms.txt)
 
-> Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them.
+> Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.
 
 Part of the [Stapel framework](https://github.com/usestapel) — composable Django apps that deploy as a monolith or as microservices without changing module code.
 
@@ -24,14 +24,14 @@ pip install stapel-video
 
 | Fact | Value |
 |---|---|
-| Version | `0.6.0` |
+| Version | `0.7.0` |
 | Python | `>=3.11` (3.11, 3.12, 3.13, 3.14) |
-| HTTP operations | 7 |
+| HTTP operations | 8 |
 | Config axes | 3 |
-| Usage surface | 25 |
-| Extension points | 10 |
-| Error codes | 49 |
-| Fleet dependencies | [`stapel-auth`](https://github.com/usestapel/stapel-auth) (optional) · [`stapel-core`](https://github.com/usestapel/stapel-core) · [`stapel-profiles`](https://github.com/usestapel/stapel-profiles) (optional) · [`stapel-recordings`](https://github.com/usestapel/stapel-recordings) (optional) |
+| Usage surface | 31 |
+| Extension points | 13 |
+| Error codes | 51 |
+| Fleet dependencies | [`stapel-auth`](https://github.com/usestapel/stapel-auth) (optional) · [`stapel-core`](https://github.com/usestapel/stapel-core) · [`stapel-profiles`](https://github.com/usestapel/stapel-profiles) (optional) · [`stapel-recordings`](https://github.com/usestapel/stapel-recordings) (optional) · [`stapel-workspaces`](https://github.com/usestapel/stapel-workspaces) (optional) |
 
 ## Documentation
 
@@ -57,6 +57,10 @@ pip install stapel-video
   laptop), reconciled by a sweeper so a lost webhook cannot bill forever, and
   read back as unioned presence time and a co-presence matrix. Raw seconds, no
   threshold: this instance meters, whatever prices it decides what counts.
+- **Per-tenant usage** — spans carry an opaque `scope_key` set on the join
+  grant, so "who in THIS workspace talked how much, per month" is a read this
+  library answers, gated on the caller's mandate in that very scope. A foreign
+  key answers 404, never 403.
 
 Alpha. See [MODULE.md](https://github.com/usestapel/stapel-video/blob/main/MODULE.md) for the agent-facing map of seams.
 
@@ -93,6 +97,7 @@ application = ProtocolTypeRouter({
 | GET | `/video/api/rooms/{join_code}/participants` | Participants (anchor-paginated) |
 | POST | `/video/api/rooms/{join_code}/lobby/admit` | Admit a waiting guest (host-only) |
 | POST | `/video/api/rooms/{join_code}/lobby/deny` | Deny a waiting guest (host-only) |
+| GET | `/video/api/v1/scopes/{scope_key}/usage/` | One tenant's per-month, per-person call time (`?months=`/`?month=`, `?tz=`) — mandate-gated in that scope |
 | POST | `/video/api/webhook` | Provider webhook ingress (signed, unauthenticated) |
 
 ## Configuration (`STAPEL_VIDEO`)
@@ -107,6 +112,9 @@ application = ProtocolTypeRouter({
 | `WEBHOOK_HANDLERS` | `{}` | Provider-event → handler, merged over the builtins |
 | `PRESENCE_SWEEP_INTERVAL_SECONDS` | `60` | How often open presence spans are reconciled |
 | `PRESENCE_SPAN_RETENTION_DAYS` | `400` | When a span is purged (`None` = never) |
+| `USAGE_MANDATE` | `video.usage.read` | Capability a caller must hold **in the scope** to read its usage |
+| `USAGE_AUTHORIZER` | `…usage.staff_only_authorizer` | Fallback gate where there are no workspaces to ask |
+| `USAGE_THROTTLE` | `60/min` | Rate for the `video-scope-usage` throttle scope |
 
 `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and `DEFAULT_ADMIT_REQUIRED` are the
 three CTO-facing config axes surfaced in `docs/capabilities.json`.
@@ -138,6 +146,44 @@ call("video.presence.pairs_export", {"period": "2026-08", "limit": 500})
 #  "cursor": ..., "total": None} — raw overlaps; the "counts as a real
 #  conversation" threshold belongs to whoever asks, not to the meter.
 ```
+
+## Per-tenant usage
+
+Pass the partition on the grant and the provider echoes it back onto every
+span it reports:
+
+```python
+provider.mint_join_token(room_ref, user.pk, name, scope_key=str(workspace_id))
+```
+
+Spans recorded before you did that are the host's to place — only you know
+which tenant a `room_key` belonged to:
+
+```bash
+manage.py video_backfill_scope --resolver myapp.reporting.scope_for_room
+```
+
+Then read a workspace's own numbers, over the bus or over HTTP:
+
+```python
+call("video.presence.usage_rollup_by_month",
+     {"scope_key": str(workspace_id), "months": 6, "tz": "Europe/Berlin"})
+# {"months": [{"month": "2026-08", "users": [{"user_id", "presence_seconds",
+#  "rooms", "connections", ...}]}]} — newest month first, buckets cut at LOCAL
+#  midnight, so a DST month is genuinely an hour short.
+```
+
+`GET /video/api/v1/scopes/{scope_key}/usage/?months=6&tz=Europe/Berlin` is the
+same answer for a workspace-administration screen. It is not staff-gated: the
+caller must hold `STAPEL_VIDEO["USAGE_MANDATE"]` (default `video.usage.read`)
+**in the workspace they are asking about**, resolved through the workspaces
+access registry — register it on the roles you mean to grant it to. Asking
+about somebody else's workspace answers 404, identically to a workspace that
+does not exist: a 403 would confirm the id is real. Without workspaces in the
+picture, `USAGE_AUTHORIZER` decides (staff-only unless you replace it).
+
+Rows carry user **ids**. This library never learns anybody's name; the host
+resolves it from the roster it already has.
 
 ## License
 

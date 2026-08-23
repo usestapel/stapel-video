@@ -19,6 +19,10 @@ The extension seams (see MODULE.md):
   answers "is this user a trusted member of the scope?" (the ``scope_trusted``
   auto-admit decision). Default is a single global scope where every
   authenticated user is a member.
+- ``USAGE_AUTHORIZER`` — the fallback answer to "may this caller read this
+  scope's usage?" for a deployment with no workspaces to ask. Default:
+  staff-only. In a workspace-bearing deployment it is not consulted at all —
+  ``USAGE_MANDATE`` goes to the access registry instead.
 - ``LIVE_ROOMS_PROVIDER`` — answers "which calls is this user in right now?"
   for the ``profile.changed`` subscriber. Default reads this module's own
   tables; a host that adopted the provider seam but kept its own Room model
@@ -102,12 +106,37 @@ DEFAULTS = {
     "PRESENCE_SPAN_RETENTION_DAYS": 400,
     # Cadence of that purge (crontab kwargs) — configuration, not a literal.
     "PRESENCE_PURGE_SCHEDULE": {"hour": 4, "minute": 10},
+    # ── The per-scope usage read (0.7.0) ──────────────────────────────
+    # The capability a caller must hold IN THE SCOPE THEY ASK ABOUT to read
+    # its usage, resolved through the workspaces access registry
+    # (`workspaces.check_capability`). Not `IsStaff`: the audience is a
+    # workspace's own owner/admin looking at their own numbers, and a staff
+    # gate would mean the only people who can see a customer's usage are the
+    # vendor's employees. The host registers this capability on the roles it
+    # means to grant it to, next to its own `members.invite`.
+    "USAGE_MANDATE": "video.usage.read",
+    # Dotted path to `(request, scope_key) -> bool`, consulted INSTEAD of the
+    # registry in a deployment that cannot ask about mandates at all (no
+    # stapel_workspaces, no routed seam). The default is staff-only, because
+    # the honest fallback for "nothing here knows who owns this partition" is
+    # the operator, not everyone.
+    "USAGE_AUTHORIZER": "stapel_video.usage.staff_only_authorizer",
+    # DRF rate for the `video-scope-usage` throttle scope, read from THIS
+    # namespace: a library does not own the project's DEFAULT_THROTTLE_RATES.
+    # The read is a full scan of one partition's months, so it is cheap to
+    # ask for and not cheap to answer. None disables throttling.
+    "USAGE_THROTTLE": "60/min",
 }
 
 video_settings = AppSettings(
     "STAPEL_VIDEO",
     defaults=DEFAULTS,
-    import_strings=("VIDEO_PROVIDER", "SCOPE_PROVIDER", "LIVE_ROOMS_PROVIDER"),
+    import_strings=(
+        "VIDEO_PROVIDER",
+        "SCOPE_PROVIDER",
+        "LIVE_ROOMS_PROVIDER",
+        "USAGE_AUTHORIZER",
+    ),
     # Keys that must NOT fall back to an environment variable. AppSettings
     # reads os.environ for every key not listed here and hands back the raw
     # STRING, which for a registry or a schedule is not the type the reader

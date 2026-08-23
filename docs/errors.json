@@ -186,6 +186,14 @@
     "owner": "stapel_video"
   },
   {
+    "code": "error.400.video_invalid_usage_period",
+    "status": 400,
+    "params": [],
+    "remediation": "fix_input",
+    "en": "month must be YYYY-MM, months a positive integer, and tz an IANA time zone",
+    "owner": "stapel_video"
+  },
+  {
     "code": "error.400.video_invalid_webhook",
     "status": 400,
     "params": [],
@@ -303,6 +311,14 @@
     "params": [],
     "remediation": "retry",
     "en": "Room not found",
+    "owner": "stapel_video"
+  },
+  {
+    "code": "error.404.video_scope_not_found",
+    "status": 404,
+    "params": [],
+    "remediation": "retry",
+    "en": "Scope not found",
     "owner": "stapel_video"
   },
   {

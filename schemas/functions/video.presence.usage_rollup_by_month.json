@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.presence.usage_rollup_by_month",
+  "description": "The month-by-month shape of video.presence.usage_rollup — the table a workspace-administration screen draws. Input: {\"scope_key\": string, \"months\": integer (default 6, clamped to 1..36), \"tz\": string}. Response: {\"scope_key\": string, \"tz\": string, \"months\": [{\"month\": \"YYYY-MM\", \"period_start\": string, \"period_end\": string, \"users\": [ ...usage_rollup rows... ]}]}, NEWEST MONTH FIRST — the order the answer is read in, since a usage table opens on the month somebody is currently living in. Buckets are calendar months in `tz` (default UTC) and their boundaries are LOCAL midnight, so across a DST transition exactly one month is an hour short or an hour long; that is the point, since a report titled \"March\" must neither include the hour that belongs to April nor drop the one that belongs to March. A month with no calls is present with an empty `users` list rather than omitted: a gap meaning \"no calls\" must not be indistinguishable from a gap meaning \"this row failed to load\". `months` is clamped because the walk is linear in the spans of every bucket and the parameter is reachable from a query string.",
+  "type": "object",
+  "required": ["scope_key"],
+  "properties": {
+    "scope_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The partition to report on, as stamped on the spans."
+    },
+    "months": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "How many calendar months back (default 6, clamped to 36)."
+    },
+    "tz": {
+      "type": ["string", "null"],
+      "description": "IANA time zone the month buckets are cut in (default UTC)."
+    }
+  },
+  "additionalProperties": false
+}

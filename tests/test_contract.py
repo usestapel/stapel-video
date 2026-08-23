@@ -45,12 +45,13 @@ TRIAD = ("schema.json", "flows.json", "errors.json")
 # The fifth artifact (badge-canon §3): docs/llms.txt, rendered from
 # docs/capabilities.json (+schema/errors/flows) by stapel_tools.llms_txt.
 ARTIFACTS = TRIAD + ("capabilities.json", "llms.txt")
-#: Must match the Makefile's `contract` / `contract-check` targets. Raised
-#: from the generator's 4000 default in 0.6.0, when the presence meter added
-#: 14 surface entries next to a 49-key error registry — the same deliberate
-#: exception stapel-calendar (5000), stapel-workspaces (4500) and stapel-auth
-#: (8000) already take. The budget stays enforced, just at 5000.
-LLMS_TXT_BUDGET = "5000"
+#: Must match the Makefile's `contract` / `contract-check` targets. Raised to
+#: 6000 in 0.7.0 (from the 5000 that 0.6.0 set, itself from the generator's
+#: 4000 default) when the scope dimension added six surface entries, two comm
+#: Functions and the USAGE_AUTHORIZER seam — the same deliberate exception
+#: stapel-calendar (5000), stapel-workspaces (4500) and stapel-auth (8000)
+#: already take. The budget stays enforced, just at 6000.
+LLMS_TXT_BUDGET = "6000"
 
 
 def _emit(out_dir: Path) -> None:

@@ -14,6 +14,9 @@ from .dto import (
     ParticipantResponse,
     RoomCreateRequest,
     RoomResponse,
+    ScopeUsageMonth,
+    ScopeUsageResponse,
+    ScopeUsageRow,
 )
 
 
@@ -40,6 +43,21 @@ class AdmitResponseSerializer(StapelDataclassSerializer):
 class ParticipantListResponseSerializer(StapelDataclassSerializer):
     class Meta:
         dataclass = ParticipantListResponse
+
+
+class ScopeUsageRowSerializer(StapelDataclassSerializer):
+    class Meta:
+        dataclass = ScopeUsageRow
+
+
+class ScopeUsageMonthSerializer(StapelDataclassSerializer):
+    class Meta:
+        dataclass = ScopeUsageMonth
+
+
+class ScopeUsageResponseSerializer(StapelDataclassSerializer):
+    class Meta:
+        dataclass = ScopeUsageResponse
 
 
 class RoomCreateRequestSerializer(StapelDataclassSerializer):

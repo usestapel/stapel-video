@@ -127,6 +127,65 @@ class LobbyActionRequest:
 
 
 @dataclass
+class ScopeUsageRow:
+    """One person's presence inside one scope, for one month.
+
+    Attributes:
+        user_id: The person's id. An ID, never a name — this library does not
+            learn who anybody is, and the host resolves the display name from
+            the roster it already has.
+        presence_seconds: Unioned seconds present. A laptop and a phone were
+            one human being present, so two devices never double-count.
+        rooms: Distinct calls attended (distinct room_key), not span count.
+        connections: Distinct connections — where the reconnects show up.
+        first_seen: First moment present in the window (ISO-8601, clipped).
+        last_seen: Last moment present in the window (ISO-8601, clipped).
+    """
+
+    user_id: str
+    presence_seconds: int
+    rooms: int
+    connections: int
+    first_seen: str
+    last_seen: str
+
+
+@dataclass
+class ScopeUsageMonth:
+    """One calendar month of one scope's usage.
+
+    Attributes:
+        month: The bucket label, "YYYY-MM", in the requested time zone.
+        period_start: The month's first instant, as UTC ISO-8601.
+        period_end: The month's end (exclusive), as UTC ISO-8601.
+        users: One row per person, longest presence first. Empty for a month
+            with no calls — present rather than omitted, so "no calls" cannot
+            be mistaken for "this row failed to load".
+    """
+
+    month: str
+    period_start: str
+    period_end: str
+    users: List[ScopeUsageRow] = field(default_factory=list)
+
+
+@dataclass
+class ScopeUsageResponse:
+    """Per-month, per-person usage of one scope.
+
+    Attributes:
+        scope_key: The partition asked about, echoed back.
+        tz: The time zone the month buckets were cut in.
+        months: Newest month first. A single-month request answers with a
+            one-element list, so a client renders one shape either way.
+    """
+
+    scope_key: str
+    tz: str
+    months: List[ScopeUsageMonth] = field(default_factory=list)
+
+
+@dataclass
 class ParticipantListResponse:
     """An anchor-paginated page of participants (mirrors core AnchorPagination).
 

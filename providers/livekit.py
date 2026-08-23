@@ -17,7 +17,12 @@ lifecycle via the ``video.egress_ended`` comm emit.
 """
 from __future__ import annotations
 
-from .base import VideoProvider, VideoProviderError, split_identity
+from .base import (
+    METADATA_SCOPE_KEY,
+    VideoProvider,
+    VideoProviderError,
+    split_identity,
+)
 
 
 def _require_sdk():
@@ -63,6 +68,7 @@ class LiveKitProvider(VideoProvider):
         user_name: str,
         user_avatar: str = "",
         client_session_id: str | None = None,
+        scope_key: str | None = None,
     ) -> str:
         import json
         import uuid
@@ -95,7 +101,17 @@ class LiveKitProvider(VideoProvider):
         # the room parses one consistent JSON shape instead of branching on
         # metadata being "sometimes absent". This is also the field
         # rename_participant echoes back untouched.
-        token = token.with_metadata(json.dumps({"avatar": user_avatar or ""}))
+        #
+        # scope_key rides here (0.7.0) rather than in a second channel: this
+        # blob is the one thing LiveKit copies from the grant onto the
+        # connection and hands back on every webhook and every
+        # ListParticipants, which is exactly the echo the presence writer
+        # needs. Written only when there is one, so an unscoped grant produces
+        # no key at all and the reader sees None rather than "".
+        metadata = {"avatar": user_avatar or ""}
+        if scope_key:
+            metadata[METADATA_SCOPE_KEY] = str(scope_key)
+        token = token.with_metadata(json.dumps(metadata))
         return token.to_jwt()
 
     def rename_participant(
@@ -547,7 +563,36 @@ def _participant_dict(participant) -> dict | None:
         "connection_id": connection_id,
         "name": str(_field(participant, "name") or ""),
         "joined_at": _epoch_seconds(_field(participant, "joined_at", "joinedAt")),
+        "scope_key": _scope_key(participant),
     }
+
+
+def _scope_key(participant) -> str | None:
+    """The grant's ``scope_key``, read back out of the connection metadata.
+
+    LiveKit copies the token's metadata onto the participant and repeats it on
+    every webhook and every ``ListParticipants``, which is why
+    :meth:`LiveKitProvider.mint_join_token` puts it there — the echo IS the
+    transport. Unparseable or absent metadata is ``None``, never a raised
+    exception: this runs inside webhook ingest, and a host that writes its own
+    non-JSON metadata must lose the scope on that connection, not the event.
+    """
+    import json
+
+    raw = _field(participant, "metadata")
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        parsed = raw
+    else:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get(METADATA_SCOPE_KEY)
+    return str(value) if value else None
 
 
 def _timedelta_seconds(seconds):

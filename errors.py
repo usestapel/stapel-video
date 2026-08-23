@@ -10,8 +10,13 @@ ERR_400_INVALID_WEBHOOK = "error.400.video_invalid_webhook"
 ERR_403_NOT_ROOM_HOST = "error.403.video_not_room_host"
 ERR_403_JOIN_DENIED = "error.403.video_join_denied"
 ERR_403_NOT_ROOM_PARTICIPANT = "error.403.video_not_room_participant"
+ERR_400_INVALID_USAGE_PERIOD = "error.400.video_invalid_usage_period"
 ERR_404_ROOM_NOT_FOUND = "error.404.video_room_not_found"
 ERR_404_PARTICIPANT_NOT_FOUND = "error.404.video_participant_not_found"
+#: The uniform answer of the usage read: no such scope, no access to it, and
+#: no calls in it are ONE response. A distinct 403 would confirm that a
+#: guessed workspace id exists, which is the fact the key is protecting.
+ERR_404_SCOPE_NOT_FOUND = "error.404.video_scope_not_found"
 
 STAPEL_VIDEO_ERRORS = {
     ERR_400_INVALID_ACCESS_LEVEL: "access_level must be one of: public, scope_trusted, restricted",
@@ -19,8 +24,10 @@ STAPEL_VIDEO_ERRORS = {
     ERR_403_NOT_ROOM_HOST: "Only the room host may perform this action",
     ERR_403_JOIN_DENIED: "You were denied entry to this room",
     ERR_403_NOT_ROOM_PARTICIPANT: "Only a participant of this room may see this",
+    ERR_400_INVALID_USAGE_PERIOD: "month must be YYYY-MM, months a positive integer, and tz an IANA time zone",
     ERR_404_ROOM_NOT_FOUND: "Room not found",
     ERR_404_PARTICIPANT_NOT_FOUND: "Waiting participant not found",
+    ERR_404_SCOPE_NOT_FOUND: "Scope not found",
 }
 
 register_service_errors(STAPEL_VIDEO_ERRORS)
@@ -28,10 +35,12 @@ register_service_errors(STAPEL_VIDEO_ERRORS)
 __all__ = [
     "STAPEL_VIDEO_ERRORS",
     "ERR_400_INVALID_ACCESS_LEVEL",
+    "ERR_400_INVALID_USAGE_PERIOD",
     "ERR_400_INVALID_WEBHOOK",
     "ERR_403_NOT_ROOM_HOST",
     "ERR_403_JOIN_DENIED",
     "ERR_403_NOT_ROOM_PARTICIPANT",
     "ERR_404_ROOM_NOT_FOUND",
     "ERR_404_PARTICIPANT_NOT_FOUND",
+    "ERR_404_SCOPE_NOT_FOUND",
 ]

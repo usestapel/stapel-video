@@ -4,7 +4,12 @@
 default implementation behind the ``[livekit]`` extra. Resolve the configured
 provider with :func:`get_video_provider`.
 """
-from .base import VideoProvider, VideoProviderError, split_identity
+from .base import (
+    METADATA_SCOPE_KEY,
+    VideoProvider,
+    VideoProviderError,
+    split_identity,
+)
 
 
 def get_video_provider() -> VideoProvider:
@@ -20,6 +25,7 @@ def get_video_provider() -> VideoProvider:
 
 
 __all__ = [
+    "METADATA_SCOPE_KEY",
     "VideoProvider",
     "VideoProviderError",
     "get_video_provider",

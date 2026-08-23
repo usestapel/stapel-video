@@ -313,6 +313,66 @@
         }
       }
     },
+    "/video/api/v1/scopes/{scope_key}/usage/": {
+      "get": {
+        "operationId": "video_api_v1_scopes_usage_retrieve",
+        "description": "``GET /video/api/v1/scopes/{scope_key}/usage/`` — one partition's\nper-month, per-person call time.\n\nThe read behind a workspace-admin \"who talked how much\" screen, and the\nreason it is in the library rather than in one host: the missing dimension\nwas a class-level gap in the meter (there was no way to ask about a\npartition at all), and a host-side join would have re-implemented the\nunion arithmetic next to the table that already owns it.\n\nTwo gates, in order — see :mod:`stapel_video.usage`:\n\n* ``HasWorkspaceMandateIfScoped`` (the stapel-calendar 0.5.0 gate on\n  by-id reads): anonymous is refused in every deployment shape, the guest\n  state is refused where it exists, and a lookup that could not be made\n  is a 503 rather than a verdict about the caller.\n* ``usage.may_read_scope``: the caller must hold\n  ``STAPEL_VIDEO[\"USAGE_MANDATE\"]`` **in this scope**, resolved through\n  the workspaces access registry. Holding a mandate somewhere is not\n  authority over a workspace id somebody typed into a URL.\n\nA scope the caller may not read answers **404**, identically to a scope\nthat does not exist and to one with no calls in it. 403 would confirm that\na guessed tenant id is real.\n\n**Permissions:** `HasWorkspaceMandateIfScoped`",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "string"
+            },
+            "description": "A single calendar month, YYYY-MM. Answers a one-element `months` list, so the client renders one shape either way."
+          },
+          {
+            "in": "query",
+            "name": "months",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "How many calendar months back to report, newest first (default 6, max 36). Ignored when `month` is given."
+          },
+          {
+            "in": "path",
+            "name": "scope_key",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "tz",
+            "schema": {
+              "type": "string"
+            },
+            "description": "IANA time zone the month buckets are cut in (default UTC). Boundaries are LOCAL midnight, so a DST month is an hour short or an hour long."
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeUsageResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/video/api/v1/webhook": {
       "post": {
         "operationId": "video_api_v1_webhook_create",
@@ -546,6 +606,99 @@
           "join_code",
           "provider_room_ref",
           "scope_key"
+        ]
+      },
+      "ScopeUsageMonth": {
+        "type": "object",
+        "description": "One calendar month of one scope's usage.",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "The bucket label, \"YYYY-MM\", in the requested time zone"
+          },
+          "period_start": {
+            "type": "string",
+            "description": "The month's first instant, as UTC ISO-8601"
+          },
+          "period_end": {
+            "type": "string",
+            "description": "The month's end (exclusive), as UTC ISO-8601"
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeUsageRow"
+            },
+            "description": "One row per person, longest presence first. Empty for a month"
+          }
+        },
+        "required": [
+          "month",
+          "period_end",
+          "period_start"
+        ]
+      },
+      "ScopeUsageResponse": {
+        "type": "object",
+        "description": "Per-month, per-person usage of one scope.",
+        "properties": {
+          "scope_key": {
+            "type": "string",
+            "description": "The partition asked about, echoed back"
+          },
+          "tz": {
+            "type": "string",
+            "description": "The time zone the month buckets were cut in"
+          },
+          "months": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeUsageMonth"
+            },
+            "description": "Newest month first. A single-month request answers with a"
+          }
+        },
+        "required": [
+          "scope_key",
+          "tz"
+        ]
+      },
+      "ScopeUsageRow": {
+        "type": "object",
+        "description": "One person's presence inside one scope, for one month.",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "The person's id. An ID, never a name — this library does not"
+          },
+          "presence_seconds": {
+            "type": "integer",
+            "description": "Unioned seconds present. A laptop and a phone were"
+          },
+          "rooms": {
+            "type": "integer",
+            "description": "Distinct calls attended (distinct room_key), not span count"
+          },
+          "connections": {
+            "type": "integer",
+            "description": "Distinct connections — where the reconnects show up"
+          },
+          "first_seen": {
+            "type": "string",
+            "description": "First moment present in the window (ISO-8601, clipped)"
+          },
+          "last_seen": {
+            "type": "string",
+            "description": "Last moment present in the window (ISO-8601, clipped)"
+          }
+        },
+        "required": [
+          "connections",
+          "first_seen",
+          "last_seen",
+          "presence_seconds",
+          "rooms",
+          "user_id"
         ]
       }
     },

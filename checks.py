@@ -18,6 +18,9 @@ cannot run with; W-level for entries that only degrade lazily.
 - A WEBHOOK_HANDLERS overlay entry that cannot be imported or is not callable
   -> E (the event it claims to handle is silently unhandled otherwise, and a
   webhook that does nothing looks exactly like a webhook that was never sent).
+- USAGE_AUTHORIZER unimportable / not callable -> E (the per-scope usage read
+  would 500 behind its own authorization gate, in exactly the deployment
+  shape — no workspaces — where that fallback is the only authority).
 - The presence sweeper / span retention not scheduled in a deployment that
   drives a beat schedule -> W. Both are jobs whose absence is invisible:
   unswept spans stay open and keep counting, unpurged spans just accumulate.
@@ -239,6 +242,41 @@ def check_webhook_handlers(app_configs, **kwargs):
                 )
             )
     return errors
+
+
+@checks.register(checks.Tags.compatibility)
+def check_usage_authorizer(app_configs, **kwargs):
+    """E011: the usage read's fallback authorizer is broken or is not callable.
+
+    It is only consulted in a deployment that cannot ask about mandates, which
+    is exactly the deployment where nobody notices it is missing until the
+    first admin opens the usage screen and gets a 500. Boot is a better place
+    to find out than a stack trace behind an authorization gate.
+    """
+    from .conf import video_settings
+
+    try:
+        authorizer = video_settings.USAGE_AUTHORIZER
+    except Exception as exc:
+        return [
+            checks.Error(
+                f"STAPEL_VIDEO['USAGE_AUTHORIZER'] could not be imported: {exc}",
+                hint=(
+                    "Point it at a callable (request, scope_key) -> bool, or "
+                    "drop the setting to use the staff-only default."
+                ),
+                id="stapel_video.E011",
+            )
+        ]
+    if not callable(authorizer):
+        return [
+            checks.Error(
+                "STAPEL_VIDEO['USAGE_AUTHORIZER'] must be a callable "
+                "(request, scope_key) -> bool.",
+                id="stapel_video.E011",
+            )
+        ]
+    return []
 
 
 @checks.register(checks.Tags.compatibility)

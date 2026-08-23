@@ -205,6 +205,19 @@ class ParticipantSpan(models.Model):
     room_key = models.CharField(max_length=255, db_index=True)
     user_id = models.CharField(max_length=64, db_index=True)
     connection_id = models.CharField(max_length=128, db_index=True)
+    #: The partition a report groups by — for a workspace product, the
+    #: workspace id; opaque here, exactly like ``room_key``. It arrives on the
+    #: JOIN GRANT (``mint_join_token(..., scope_key=...)``) and rides the
+    #: provider's echo of that grant back into the span, because the ingest
+    #: path has no other way to learn it: a webhook names a room, and only the
+    #: host knows which partition that room belongs to.
+    #:
+    #: NULL, never ``""``. A host that partitions nothing writes no scope at
+    #: all, and "" would be a real scope with an empty name — a value the
+    #: usage read would happily group by and report on. Distinguishing
+    #: "unscoped" from "scoped to the empty string" is the difference between
+    #: a report that omits a room and one that invents a tenant.
+    scope_key = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     #: The provider's server timestamp for the join, never our receipt time.
     joined_at = models.DateTimeField()
     #: NULL means "still connected as far as this instance knows" — the
@@ -238,6 +251,11 @@ class ParticipantSpan(models.Model):
             # The meter's own queries: one person's period, one room's period.
             models.Index(fields=["user_id", "joined_at"], name="video_span_user_joined"),
             models.Index(fields=["room_key", "joined_at"], name="video_span_room_joined"),
+            # The usage read's query: one partition's period. Without it the
+            # workspace-admin table scans the whole meter — a table sized by
+            # every call the instance ever carried — to answer about one
+            # tenant's month.
+            models.Index(fields=["scope_key", "joined_at"], name="video_span_scope_joined"),
             # The sweeper's query: everything still open, cheaply.
             models.Index(fields=["left_at"], name="video_span_open"),
         ]

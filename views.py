@@ -8,9 +8,14 @@ signs it, and ``services.handle_webhook`` verifies the signature.
 """
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import permissions, status
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from stapel_core.django.api.errors import StapelErrorResponse, StapelResponse
 from stapel_core.django.api.pagination import AnchorPagination
+from stapel_core.django.api.permissions import (
+    ANONYMOUS_DENIED,
+    HasWorkspaceMandateIfScoped,
+)
 
 from . import services
 from .dto import (
@@ -19,15 +24,20 @@ from .dto import (
     ParticipantListResponse,
     ParticipantResponse,
     RoomResponse,
+    ScopeUsageMonth,
+    ScopeUsageResponse,
+    ScopeUsageRow,
 )
 from .errors import (
     ERR_400_INVALID_ACCESS_LEVEL,
+    ERR_400_INVALID_USAGE_PERIOD,
     ERR_400_INVALID_WEBHOOK,
     ERR_403_JOIN_DENIED,
     ERR_403_NOT_ROOM_HOST,
     ERR_403_NOT_ROOM_PARTICIPANT,
     ERR_404_PARTICIPANT_NOT_FOUND,
     ERR_404_ROOM_NOT_FOUND,
+    ERR_404_SCOPE_NOT_FOUND,
 )
 from .models import AccessLevel, ParticipantRole
 from .providers import VideoProviderError
@@ -40,6 +50,7 @@ from .serializers import (
     ParticipantListResponseSerializer,
     RoomCreateRequestSerializer,
     RoomResponseSerializer,
+    ScopeUsageResponseSerializer,
 )
 
 
@@ -50,6 +61,23 @@ class ParticipantAnchorPagination(AnchorPagination):
     ordering = "joined_at"
     page_size = 100
     max_page_size = 1000
+
+
+class UsageThrottle(ScopedRateThrottle):
+    """Rate for the usage read, taken from ``STAPEL_VIDEO``.
+
+    A library must not reach into the project's ``DEFAULT_THROTTLE_RATES`` to
+    declare its own limit — that dict belongs to the host, and a module that
+    writes into it silently changes rates the host set for its own endpoints.
+    The scope name is this module's (``video-scope-usage``) and the number
+    comes from this module's namespace. ``None`` disables it, which DRF reads
+    as "no rate configured" and lets through.
+    """
+
+    def get_rate(self):
+        from .conf import video_settings
+
+        return video_settings.USAGE_THROTTLE
 
 
 class SerializerSeamMixin:
@@ -99,6 +127,29 @@ def room_to_dto(room, *, reveal_scope: bool = True) -> RoomResponse:
         admit_required=room.admit_required,
         created_by_id=str(room.created_by_id),
         provider_room_ref=room.provider_room_ref,
+    )
+
+
+def usage_to_dto(scope_key, tz: str, buckets: list) -> ScopeUsageResponse:
+    """The rollup's plain dicts as the response DTO.
+
+    A mapper next to ``room_to_dto`` rather than a body inside the view: the
+    read has two entry shapes (a range of months and a single one) that must
+    answer identically, and a client that had to branch on which query
+    parameter it sent would be carrying the server's plumbing.
+    """
+    return ScopeUsageResponse(
+        scope_key=str(scope_key),
+        tz=tz,
+        months=[
+            ScopeUsageMonth(
+                month=bucket["month"],
+                period_start=bucket["period_start"],
+                period_end=bucket["period_end"],
+                users=[ScopeUsageRow(**row) for row in bucket["users"]],
+            )
+            for bucket in buckets
+        ],
     )
 
 
@@ -329,6 +380,124 @@ class LobbyDenyView(_LobbyActionView):
         if participant is None:
             return StapelErrorResponse(404, ERR_404_PARTICIPANT_NOT_FOUND)
         return StapelResponse({"status": "denied", "participant_id": str(participant.id)})  # noqa: R006
+
+
+@extend_schema(tags=["Video"])
+class ScopeUsageView(SerializerSeamMixin, APIView):
+    """``GET /video/api/v1/scopes/{scope_key}/usage/`` — one partition's
+    per-month, per-person call time.
+
+    The read behind a workspace-admin "who talked how much" screen, and the
+    reason it is in the library rather than in one host: the missing dimension
+    was a class-level gap in the meter (there was no way to ask about a
+    partition at all), and a host-side join would have re-implemented the
+    union arithmetic next to the table that already owns it.
+
+    Two gates, in order — see :mod:`stapel_video.usage`:
+
+    * ``HasWorkspaceMandateIfScoped`` (the stapel-calendar 0.5.0 gate on
+      by-id reads): anonymous is refused in every deployment shape, the guest
+      state is refused where it exists, and a lookup that could not be made
+      is a 503 rather than a verdict about the caller.
+    * ``usage.may_read_scope``: the caller must hold
+      ``STAPEL_VIDEO["USAGE_MANDATE"]`` **in this scope**, resolved through
+      the workspaces access registry. Holding a mandate somewhere is not
+      authority over a workspace id somebody typed into a URL.
+
+    A scope the caller may not read answers **404**, identically to a scope
+    that does not exist and to one with no calls in it. 403 would confirm that
+    a guessed tenant id is real.
+    """
+
+    permission_classes = [HasWorkspaceMandateIfScoped]
+    #: Declared even though the gate above carries the same attribute: this
+    #: view's refusal of anonymous callers is a property of the endpoint, and
+    #: reading it should not require resolving which permission class is in
+    #: the list this month.
+    stapel_anonymous_access = ANONYMOUS_DENIED
+    throttle_classes = [UsageThrottle]
+    throttle_scope = "video-scope-usage"
+    response_serializer_class = ScopeUsageResponseSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "months",
+                int,
+                description=(
+                    "How many calendar months back to report, newest first "
+                    "(default 6, max 36). Ignored when `month` is given."
+                ),
+            ),
+            OpenApiParameter(
+                "month",
+                str,
+                description=(
+                    "A single calendar month, YYYY-MM. Answers a one-element "
+                    "`months` list, so the client renders one shape either way."
+                ),
+            ),
+            OpenApiParameter(
+                "tz",
+                str,
+                description=(
+                    "IANA time zone the month buckets are cut in (default "
+                    "UTC). Boundaries are LOCAL midnight, so a DST month is "
+                    "an hour short or an hour long."
+                ),
+            ),
+        ],
+        responses={200: ScopeUsageResponseSerializer},
+    )
+    def get(self, request, scope_key):  # noqa: R007
+        from . import presence, usage
+
+        if not usage.may_read_scope(request, scope_key):
+            return StapelErrorResponse(404, ERR_404_SCOPE_NOT_FOUND)
+
+        tz = request.query_params.get("tz") or "UTC"
+        month = (request.query_params.get("month") or "").strip()
+        try:
+            if month:
+                start, end = presence.month_bounds(month, tz)
+                buckets = [
+                    {
+                        "month": month,
+                        "period_start": start.isoformat(),
+                        "period_end": end.isoformat(),
+                        "users": presence.usage_rollup(
+                            scope_key=scope_key, period_start=start, period_end=end
+                        ),
+                    }
+                ]
+            else:
+                buckets = presence.usage_rollup_by_month(
+                    scope_key=scope_key,
+                    months=_months(request.query_params.get("months")),
+                    tz=tz,
+                )
+        except (presence.InvalidPeriod, presence.InvalidTimezone, ValueError):
+            return StapelErrorResponse(400, ERR_400_INVALID_USAGE_PERIOD)
+
+        response_cls = self.get_response_serializer_class()
+        return StapelResponse(response_cls(usage_to_dto(scope_key, tz, buckets)))
+
+
+def _months(raw) -> int:
+    """The ``months`` query parameter, or the default.
+
+    A missing value is the default; a malformed one is a 400 by way of the
+    ``ValueError`` the caller catches. Silently defaulting on ``months=abc``
+    would answer a question nobody asked and look like it worked.
+    """
+    from .presence import ROLLUP_DEFAULT_MONTHS
+
+    if raw in (None, ""):
+        return ROLLUP_DEFAULT_MONTHS
+    value = int(raw)
+    if value < 1:
+        raise ValueError(f"months must be positive, got {value}")
+    return value
 
 
 @extend_schema(tags=["Video"])

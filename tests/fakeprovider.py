@@ -14,6 +14,7 @@ import json
 from datetime import datetime, timezone
 
 from stapel_video.providers.base import (
+    METADATA_SCOPE_KEY,
     VideoProvider,
     VideoProviderError,
     split_identity,
@@ -41,7 +42,25 @@ def _participant(raw):
         "connection_id": connection_id,
         "name": str(raw.get("name") or ""),
         "joined_at": _epoch(raw.get("joined_at")),
+        # The scope echo, read out of the same per-connection metadata blob
+        # LiveKitProvider uses, so an ingest test exercises the real contract
+        # rather than a shortcut key the fake invented.
+        "scope_key": _scope_key(raw.get("metadata")),
     }
+
+
+def _scope_key(metadata):
+    if not metadata:
+        return None
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            return None
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(METADATA_SCOPE_KEY)
+    return str(value) if value else None
 
 
 class FakeProvider(VideoProvider):
@@ -51,7 +70,7 @@ class FakeProvider(VideoProvider):
     #: ``get_video_provider()`` built.
     renames: list = []
     #: Every ``mint_join_token`` call, as (room_ref, user_id, name, avatar,
-    #: client_session_id). Same class-level trick as ``renames``.
+    #: client_session_id, scope_key). Same class-level trick as ``renames``.
     mints: list = []
     #: Every ``remove_participant`` call, as (room_ref, user_id).
     removals: list = []
@@ -72,10 +91,11 @@ class FakeProvider(VideoProvider):
         user_name,
         user_avatar: str = "",
         client_session_id=None,
+        scope_key=None,
     ) -> str:
         FakeProvider.mints.append(
             (provider_room_ref, str(user_id), user_name, user_avatar,
-             client_session_id)
+             client_session_id, scope_key)
         )
         identity = (
             f"{user_id}_{client_session_id}" if client_session_id else f"{user_id}_rnd"

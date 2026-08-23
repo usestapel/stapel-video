@@ -23,6 +23,17 @@ class VideoProviderError(Exception):
     """Provider-side failure (bad response, transport error, bad webhook)."""
 
 
+#: The key a provider stashes the grant's ``scope_key`` under in whatever
+#: per-connection metadata blob it echoes back (LiveKit: the token metadata
+#: JSON). Declared on the ABC, not inside one vendor's class, because the
+#: WRITER (``mint_join_token``) and the READER (``parse_webhook`` /
+#: ``list_participants``) are two methods that must agree on one string —
+#: a constant one implementation owns privately is a constant the next
+#: implementation gets subtly wrong, and the symptom is a whole tenant's
+#: usage silently reading as unscoped.
+METADATA_SCOPE_KEY = "stapel_scope_key"
+
+
 class VideoProvider(ABC):
     """A pluggable video-conferencing backend for rooms."""
 
@@ -44,6 +55,7 @@ class VideoProvider(ABC):
         user_name: str,
         user_avatar: str = "",
         client_session_id: str | None = None,
+        scope_key: str | None = None,
     ) -> str:
         """Return a signed token letting ``user_id`` join ``provider_room_ref``.
 
@@ -70,6 +82,24 @@ class VideoProvider(ABC):
         evict the stale connection the instant the new one lands. Callers that
         pass nothing keep the random suffix, so two genuine devices under one
         user id still get two identities.
+
+        ``scope_key`` (0.7.0) is the reporting partition the host wants this
+        stay counted under — a workspace id, a tenant, whatever it
+        partitions; opaque here. It travels the same one-way trip the name and
+        the avatar do, and for the same reason: **the grant is the only place
+        the answer is known**. A ``participant_joined`` webhook names a room
+        and a person, and nothing in it says which tenant that room belongs
+        to; the process that minted the token is the one that knew. So the
+        provider carries it in the connection metadata and echoes it back in
+        :meth:`parse_webhook` / :meth:`list_participants` under the same key,
+        and the presence writer copies it onto the span.
+
+        ``None`` — the default — means "this host partitions nothing", and is
+        written to the span as NULL rather than as an empty scope.
+
+        This kwarg is the 0.7.0 breaking change to the contract: an
+        out-of-tree provider must accept it (and should echo it) or the
+        library's own call site raises ``TypeError``.
         """
         raise NotImplementedError
 
@@ -174,7 +204,8 @@ class VideoProvider(ABC):
              "room": {"name": str, "sid": str} | None,
              "participant": {"identity": str, "user_id": str,
                              "connection_id": str, "name": str,
-                             "joined_at": datetime | None} | None,
+                             "joined_at": datetime | None,
+                             "scope_key": str | None} | None,
              "egress_id": str | None,
              "status": str | None,
              "storage_key": str | None}
@@ -197,6 +228,11 @@ class VideoProvider(ABC):
         because the provider is the one that invented the convention in
         :meth:`mint_join_token` (see :func:`split_identity`). A caller that
         re-parses an identity string is a caller that has forked the provider.
+
+        ``participant["scope_key"]`` is the echo of the grant's ``scope_key``
+        (0.7.0), or ``None`` when the grant carried none. Same argument as the
+        decomposition: only the provider knows where it stashed the value, so
+        only the provider can hand it back.
 
         Raise :class:`VideoProviderError` if the signature is invalid or the
         body is malformed — the ingress endpoint turns that into a 400.

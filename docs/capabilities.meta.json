@@ -1,7 +1,7 @@
 {
   "_comment": "Hand-curated layer of docs/capabilities.json (capability-config.md §2 p.3). The emitter (stapel_video/_capabilities.py) merges this over the derived axes. Video exposes THREE CTO-facing config axes — VIDEO_PROVIDER (which vendor runs the calls), DEFAULT_ACCESS_LEVEL and DEFAULT_ADMIT_REQUIRED (how open a fresh room is). Keep language business-facing — it surfaces in CTO conversations, not in code. The `surface` section (stapel_tools.surface) is the third one: not what a product configures or replaces, but what it must CALL — the room lifecycle, the admission decision, the two seam proxies (recording egress, lobby fan-out) and the presence meter, all of which a product otherwise re-implements against the video vendor directly. surface_roots select the symbols; every selected symbol MUST carry an intent line here or emission fails naming it.",
   "maturity": "alpha",
-  "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them.",
+  "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.",
   "requires": [
     {
       "module": "stapel-core",
@@ -22,6 +22,11 @@
       "module": "stapel-profiles",
       "optional": true,
       "reason": "publishes profile.changed, which video consumes to carry a renamed person's new name onto the connections they already hold — the display name is a claim frozen inside the join token, so without that event a rename reaches a live call only when the person happens to reconnect"
+    },
+    {
+      "module": "stapel-workspaces",
+      "optional": true,
+      "reason": "answers the two authorization questions the per-scope usage read asks: workspaces.check_mandate (is the caller a principal at all) and workspaces.check_capability (does the caller hold STAPEL_VIDEO['USAGE_MANDATE'] in the scope they named). Without workspaces installed or routed, the read falls back to STAPEL_VIDEO['USAGE_AUTHORIZER'] — staff-only by default"
     }
   ],
   "extension_points": [
@@ -71,9 +76,24 @@
       "summary": "Who actually spent time in a call with whom, as one row per pair per room with the raw overlap in seconds. The answer to \"how many real conversation partners did this customer have this month\", with the \"real\" threshold left to whoever asks."
     },
     {
+      "name": "video.presence.usage_rollup",
+      "kind": "comm_function",
+      "summary": "One tenant's calls, one row per person: unioned minutes, distinct calls attended and distinct connections over any window. The dimension the first three reads did not have — they answer about a person, a room or the whole instance, and a workspace administrator asks about a workspace."
+    },
+    {
+      "name": "video.presence.usage_rollup_by_month",
+      "kind": "comm_function",
+      "summary": "The same answer cut into calendar months in the customer's own time zone, newest first — the table a workspace-administration usage screen renders. Boundaries are local midnight, so a month that crosses a daylight-saving change is genuinely an hour short."
+    },
+    {
       "name": "serializer_seams",
       "kind": "class_override",
       "summary": "Every view declares request/response serializer seams (SerializerSeamMixin) — subclass the view, override the attribute, remount the URL."
+    },
+    {
+      "name": "USAGE_AUTHORIZER",
+      "kind": "dotted_path",
+      "summary": "Who may read one partition's usage in a deployment with no workspaces to ask (a callable (request, scope_key) -> bool; staff-only by default). Where workspaces IS present it is not consulted at all — the capability named by USAGE_MANDATE goes to the access registry, so a member of one workspace cannot read another's numbers by typing its id into the URL."
     }
   ],
   "axes": {
@@ -212,6 +232,30 @@
     "pairs_export": {
       "kind": "factory",
       "intent": "The cursor-paged co-presence matrix: one row per pair per room with the raw overlap in seconds. Quadratic in a room's attendees, so rooms are the batch boundary — not arithmetic to re-derive from the span export by hand."
+    },
+    "usage_rollup": {
+      "kind": "factory",
+      "intent": "One PARTITION's window, one row per person — the answer behind a workspace-administration \"who talked how much\" screen, and the only presence read that groups by scope_key. Reach for it instead of joining the span table to your own rooms and re-deriving the union: seconds are unioned per person (two devices are one human), rooms counts distinct calls rather than spans, and the arithmetic is the same code the invoice-facing aggregate uses."
+    },
+    "usage_rollup_by_month": {
+      "kind": "factory",
+      "intent": "usage_rollup cut into calendar months in a caller-named time zone, newest first — the whole table a usage screen draws, in one call. Month boundaries are LOCAL midnight, so a DST month is genuinely an hour short; slicing UTC months yourself puts an hour of March into April for every workspace that is not on UTC."
+    },
+    "month_bounds": {
+      "kind": "factory",
+      "intent": "\"2026-08\" plus an IANA zone to the half-open month as absolute UTC instants. Use it wherever a report names a month in somebody's local calendar — a hand-rolled first-of-the-month is naive about DST, and the hour it misplaces is the hour a customer disputes."
+    },
+    "recent_months": {
+      "kind": "factory",
+      "intent": "The last N month labels in a zone, newest first — the bucket list a month selector renders. Deriving it from timedelta(days=30) drifts a month out of place twice a year."
+    },
+    "normalize_scope_key": {
+      "kind": "factory",
+      "intent": "The one funnel every writer of ParticipantSpan.scope_key goes through: falsy in, NULL out. Call it before writing a scope from your own ingest path, so \"this host partitions nothing\" never becomes a tenant whose id is the empty string and whose usage the report happily totals."
+    },
+    "backfill_scope_keys": {
+      "kind": "gate_function",
+      "intent": "Stamp scope_key onto spans recorded before the grant carried one, using a host callable room_key -> scope_key|None (the management command video_backfill_scope is its CLI). Idempotent because the population is defined as scope_key IS NULL, so a crashed run resumes and a second run is a no-op — an UPDATE written by hand is neither."
     },
     "period_bounds": {
       "kind": "factory",

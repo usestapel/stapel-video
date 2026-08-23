@@ -48,6 +48,12 @@ logger = logging.getLogger(__name__)
 EXPORT_DEFAULT_LIMIT = 500
 EXPORT_MAX_LIMIT = 2000
 
+#: Months a single ``usage_rollup_by_month`` call may cover, and the ceiling.
+#: The read walks every span in every bucket, so an unbounded ``months`` is an
+#: unbounded scan reachable from a URL query string.
+ROLLUP_DEFAULT_MONTHS = 6
+ROLLUP_MAX_MONTHS = 36
+
 
 class InvalidExportCursor(Exception):
     """The opaque cursor handed to an export was not one we issued."""
@@ -56,6 +62,10 @@ class InvalidExportCursor(Exception):
 class InvalidPeriod(Exception):
     """A period could not be read as a UTC calendar month or an explicit
     ``[start, end)`` pair."""
+
+
+class InvalidTimezone(Exception):
+    """A ``tz`` argument named no zone this deployment's tz database knows."""
 
 
 # ── Webhook handlers (registered in webhooks.BUILTIN_WEBHOOK_HANDLERS) ─────
@@ -85,6 +95,7 @@ def handle_participant_joined(parsed: dict) -> None:
         user_id=participant["user_id"],
         connection_id=participant["connection_id"],
         joined_at=joined_at,
+        scope_key=participant.get("scope_key"),
     )
 
 
@@ -132,6 +143,7 @@ def handle_participant_left(parsed: dict) -> None:
         joined_at=joined_at,
         closed_at=left_at,
         close_reason=SpanCloseReason.WEBHOOK,
+        scope_key=participant.get("scope_key"),
     )
 
 
@@ -155,6 +167,22 @@ def _room_and_participant(parsed: dict, event: str):
 # ── Writing spans ──────────────────────────────────────────────────────────
 
 
+def normalize_scope_key(scope_key) -> str | None:
+    """The value a span's ``scope_key`` column may actually hold.
+
+    ``None`` for every falsy input, including ``""``. The column is nullable
+    precisely so that "this host partitions nothing" and "this stay belongs to
+    the tenant whose id is the empty string" stay different facts: the usage
+    read groups by the column, and an empty-string scope would be a tenant the
+    report invented. One funnel, so every writer — webhook, sweeper, backfill,
+    host — agrees.
+    """
+    if scope_key is None:
+        return None
+    text = str(scope_key).strip()
+    return text or None
+
+
 def open_span(
     *,
     room_key: str,
@@ -163,6 +191,7 @@ def open_span(
     joined_at: datetime,
     closed_at: datetime | None = None,
     close_reason: str = "",
+    scope_key: str | None = None,
 ):
     """Record a connection's stay. Returns ``(span, created)``.
 
@@ -170,6 +199,13 @@ def open_span(
     the deduplication, so two deliveries of the same arrival race into one
     row and the loser reads it back. ``closed_at`` writes an already-finished
     span in one go (the out-of-order ``participant_left`` path).
+
+    ``scope_key`` is the reporting partition, echoed off the join grant by the
+    provider (:data:`stapel_video.providers.base.METADATA_SCOPE_KEY`). It is
+    stamped only on a row this call CREATES: the span is append-only, and a
+    redelivery carrying a different scope must not silently move a recorded
+    stay from one tenant's invoice to another's. A host that changed the
+    partition of a room fixes history with the backfill command, deliberately.
 
     Emits ``video.participant.joined`` only for a row this call created, in
     the same transaction as the write: the fact and the state it describes
@@ -187,6 +223,7 @@ def open_span(
             defaults={
                 "room_key": str(room_key),
                 "user_id": str(user_id),
+                "scope_key": normalize_scope_key(scope_key),
                 "left_at": closed_at,
                 "close_reason": close_reason if closed_at else "",
                 "last_seen_at": closed_at or joined_at,
@@ -291,6 +328,76 @@ def close_spans_explicitly(
     return closed
 
 
+def backfill_scope_keys(
+    resolver,
+    *,
+    batch_size: int = 1000,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Stamp ``scope_key`` on spans that have none, using the host's resolver.
+
+    ``resolver`` is ``room_key -> scope_key | None``. Only the host can supply
+    it: a span holds an opaque room key, and which partition that room belongs
+    to is a fact this library has never been told. See the
+    ``video_backfill_scope`` management command.
+
+    Idempotent by construction rather than by bookkeeping — the population is
+    defined as ``scope_key IS NULL``, so every row this call stamps leaves the
+    population, a crash mid-run loses no progress, and a second full run does
+    nothing. Rooms are the unit: one resolver call per distinct room, one
+    bulk UPDATE per ``batch_size`` spans, because the reason this exists is a
+    table holding every call the instance ever carried.
+
+    A ``None`` from the resolver leaves the spans NULL and is counted as
+    ``unresolved``. Some rooms really do belong to no partition, and forcing
+    them into one would invent a tenant; but a resolver reading the wrong
+    table answers ``None`` for everything too, which is why the two are
+    counted separately and reported.
+
+    Returns ``{"rooms", "resolved", "unresolved", "spans"}``.
+    """
+    unscoped = ParticipantSpan.objects.filter(scope_key__isnull=True)
+    room_keys = sorted(_distinct_room_keys(unscoped))
+    if limit is not None:
+        room_keys = room_keys[: max(0, int(limit))]
+
+    result = {"rooms": len(room_keys), "resolved": 0, "unresolved": 0, "spans": 0}
+    for room_key in room_keys:
+        scope_key = normalize_scope_key(resolver(room_key))
+        if scope_key is None:
+            result["unresolved"] += 1
+            continue
+        result["resolved"] += 1
+        result["spans"] += _stamp_room(
+            room_key, scope_key, batch_size=batch_size, dry_run=dry_run
+        )
+    logger.info(
+        "video_backfill_scope: %(rooms)s room(s), %(resolved)s resolved, "
+        "%(unresolved)s unresolved, %(spans)s span(s) stamped",
+        result,
+    )
+    return result
+
+
+def _stamp_room(room_key: str, scope_key: str, *, batch_size: int, dry_run: bool) -> int:
+    """Set one room's unscoped spans, in batches. Returns how many."""
+    base = ParticipantSpan.objects.filter(room_key=room_key, scope_key__isnull=True)
+    if dry_run:
+        return base.count()
+    stamped = 0
+    while True:
+        # Paged by primary key rather than by a sliced UPDATE: not every
+        # backend supports UPDATE ... LIMIT, and re-reading the same filter
+        # is safe precisely because a stamped row leaves the population.
+        ids = list(base.values_list("pk", flat=True)[: max(1, int(batch_size))])
+        if not ids:
+            return stamped
+        stamped += ParticipantSpan.objects.filter(pk__in=ids).update(
+            scope_key=scope_key
+        )
+
+
 # ── The sweeper ────────────────────────────────────────────────────────────
 
 
@@ -383,6 +490,10 @@ def sweep_open_spans(*, now: datetime | None = None) -> dict:
                 user_id=participant.get("user_id") or connection_id,
                 connection_id=connection_id,
                 joined_at=participant["joined_at"],
+                # The roster echoes the same grant metadata a webhook does, so
+                # a span the sweeper REPAIRS lands in the right partition
+                # instead of being the one unscoped row in a tenant's month.
+                scope_key=participant.get("scope_key"),
             )
             if created:
                 result["opened"] += 1
@@ -454,6 +565,65 @@ def period_bounds(period: str) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _zone(tz: str | None):
+    """A ``ZoneInfo`` for *tz*, or UTC when nothing was asked for."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    name = str(tz or "").strip() or "UTC"
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise InvalidTimezone(f"{name!r} is not an IANA time zone") from exc
+
+
+def month_bounds(month: str, tz: str | None = None) -> tuple[datetime, datetime]:
+    """``"YYYY-MM"`` + a zone -> the half-open month ``[start, end)`` in UTC.
+
+    :func:`period_bounds` generalized to the calendar a human is looking at.
+    The boundary is LOCAL midnight converted to an absolute instant, so
+    "August" for a Berlin workspace starts at 22:00 UTC on July 31st — and,
+    across a DST transition, one of the twelve months is 23 or 25 hours short
+    of its naive length. That is the point: a report titled "March" must not
+    quietly include the hour that belongs to April, nor drop the hour that
+    belongs to March, because the two are what a spring-forward moves.
+
+    The stored instants never change — the meter records absolute time — so a
+    host may re-cut the same spans into a different zone's months at any point
+    without a migration.
+    """
+    zone = _zone(tz)
+    try:
+        year, month_number = (int(part) for part in str(month).split("-"))
+        start = datetime(year, month_number, 1, tzinfo=zone)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise InvalidPeriod(f"{month!r} is not a YYYY-MM month") from exc
+    end = (
+        datetime(year + 1, 1, 1, tzinfo=zone)
+        if month_number == 12
+        else datetime(year, month_number + 1, 1, tzinfo=zone)
+    )
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def recent_months(count: int, tz: str | None = None, *, now: datetime | None = None) -> list[str]:
+    """The last *count* calendar months in *tz*, NEWEST FIRST.
+
+    Newest first because that is the order the answer is read in: a usage
+    table opens on the month somebody is currently living in, not on the one
+    that fell out of the retention window.
+    """
+    zone = _zone(tz)
+    here = (now or _now()).astimezone(zone)
+    year, month_number = here.year, here.month
+    months = []
+    for _ in range(max(1, int(count))):
+        months.append(f"{year:04d}-{month_number:02d}")
+        month_number -= 1
+        if month_number == 0:
+            year, month_number = year - 1, 12
+    return months
+
+
 def _resolve_period(payload: dict) -> tuple[datetime, datetime]:
     """The ``[start, end)`` a Function payload asks for.
 
@@ -472,7 +642,7 @@ def _resolve_period(payload: dict) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _spans_in_period(start: datetime, end: datetime, *, user_id="", room_key=""):
+def _spans_in_period(start: datetime, end: datetime, *, user_id="", room_key="", scope_key=None):
     """Every span overlapping ``[start, end)``, optionally one scope of it."""
     from django.db.models import Q
 
@@ -483,6 +653,8 @@ def _spans_in_period(start: datetime, end: datetime, *, user_id="", room_key="")
         qs = qs.filter(user_id=str(user_id))
     if room_key:
         qs = qs.filter(room_key=str(room_key))
+    if scope_key is not None:
+        qs = qs.filter(scope_key=str(scope_key))
     return qs
 
 
@@ -592,6 +764,126 @@ def presence_aggregate(
     }
 
 
+# ── Reading: the per-scope usage rollup ────────────────────────────────────
+
+
+def usage_rollup(
+    *,
+    scope_key: str,
+    period_start: datetime,
+    period_end: datetime,
+    group_by: str = "user",
+) -> list[dict]:
+    """One partition's period, one row per person:
+    ``[{user_id, presence_seconds, rooms, connections, first_seen, last_seen}]``.
+
+    The same arithmetic as :func:`presence_aggregate`, cut by ``scope_key``
+    and reported per user instead of totalled — deliberately the same code
+    path (``_clip`` / ``_merge_intervals``), because two implementations of
+    "how long was this person present" is two answers, and the one on the
+    workspace-admin screen would be the one nobody reconciles against the
+    invoice. Seconds are UNIONED per person: a laptop and a phone were one
+    human being present.
+
+    ``rooms`` is the count of DISTINCT ``room_key``s, not of spans — a person
+    who reconnected nine times to one call attended one call. ``connections``
+    is the distinct connection count, which is where the reconnects show up,
+    and it is reported separately rather than folded in so a support question
+    ("why does this say four devices?") has an answer in the data.
+
+    ``first_seen`` / ``last_seen`` are CLIPPED to the window, like the
+    seconds: a stay that started last month starts, in this month's row, at
+    the month's first instant. A row whose numbers and whose timestamps
+    disagreed about the window would be unreadable.
+
+    Rows come back longest-first, then by user id — a stable total order, so
+    two calls with the same data page and render identically.
+
+    ``group_by`` takes only ``"user"`` today and raises on anything else. It
+    is an argument rather than an implied constant so the call site states
+    which question it asked, and so a second grouping is additive instead of
+    a signature change; silently ignoring an unknown value would answer a
+    different question than the caller asked for.
+    """
+    if group_by != "user":
+        raise ValueError(
+            f"usage_rollup(group_by={group_by!r}) is not implemented — the "
+            'only grouping is "user". Answering the default silently would '
+            "hand back a per-user table labelled as something else."
+        )
+    scope_key = str(scope_key or "").strip()
+    if not scope_key:
+        raise ValueError(
+            "usage_rollup needs a scope_key: an empty one is not 'every "
+            "scope', it is a partition that never exists (spans store NULL)."
+        )
+    now = _now()
+    per_user: dict[str, dict] = {}
+    for span in _spans_in_period(period_start, period_end, scope_key=scope_key):
+        interval = _clip(span, period_start, period_end, now=now)
+        if interval is None:
+            continue
+        entry = per_user.setdefault(
+            span.user_id, {"intervals": [], "rooms": set(), "connections": set()}
+        )
+        entry["intervals"].append(interval)
+        entry["rooms"].add(span.room_key)
+        entry["connections"].add(span.connection_id)
+
+    rows = []
+    for user_id, entry in per_user.items():
+        merged = _merge_intervals(entry["intervals"])
+        rows.append(
+            {
+                "user_id": user_id,
+                "presence_seconds": _interval_seconds(merged),
+                "rooms": len(entry["rooms"]),
+                "connections": len(entry["connections"]),
+                "first_seen": merged[0][0].isoformat(),
+                "last_seen": merged[-1][1].isoformat(),
+            }
+        )
+    rows.sort(key=lambda row: (-row["presence_seconds"], row["user_id"]))
+    return rows
+
+
+def usage_rollup_by_month(
+    *,
+    scope_key: str,
+    months: int = ROLLUP_DEFAULT_MONTHS,
+    tz: str | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
+    """The month-by-month table:
+    ``[{month, period_start, period_end, users: [...]}]``, newest month first.
+
+    Buckets are calendar months in ``tz`` (default UTC), so the boundaries are
+    local midnights and a DST transition shortens or lengthens exactly one of
+    them (see :func:`month_bounds`). ``months`` is clamped to
+    ``[1, ROLLUP_MAX_MONTHS]``: this walk is linear in the spans of every
+    bucket and it is reachable from a query string.
+
+    An empty month is present with ``users: []`` rather than omitted. The
+    caller is drawing a table of months, and a gap that means "no calls" must
+    not be indistinguishable from a gap that means "this row failed to load".
+    """
+    count = max(1, min(int(months or ROLLUP_DEFAULT_MONTHS), ROLLUP_MAX_MONTHS))
+    result = []
+    for month in recent_months(count, tz, now=now):
+        start, end = month_bounds(month, tz)
+        result.append(
+            {
+                "month": month,
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+                "users": usage_rollup(
+                    scope_key=scope_key, period_start=start, period_end=end
+                ),
+            }
+        )
+    return result
+
+
 # ── Reading: exports ───────────────────────────────────────────────────────
 
 
@@ -639,6 +931,7 @@ def spans_export(
         {
             "span_id": str(span.id),
             "room_key": span.room_key,
+            "scope_key": span.scope_key,
             "user_id": span.user_id,
             "connection_id": span.connection_id,
             "joined_at": span.joined_at.isoformat(),
@@ -805,17 +1098,26 @@ def _parse_iso(value):
 __all__ = [
     "EXPORT_DEFAULT_LIMIT",
     "EXPORT_MAX_LIMIT",
+    "ROLLUP_DEFAULT_MONTHS",
+    "ROLLUP_MAX_MONTHS",
     "InvalidExportCursor",
     "InvalidPeriod",
+    "InvalidTimezone",
+    "backfill_scope_keys",
     "close_span",
     "close_spans_explicitly",
     "handle_participant_joined",
     "handle_participant_left",
+    "month_bounds",
+    "normalize_scope_key",
     "open_span",
     "pairs_export",
     "period_bounds",
     "presence_aggregate",
     "pseudonymize_user",
+    "recent_months",
     "spans_export",
     "sweep_open_spans",
+    "usage_rollup",
+    "usage_rollup_by_month",
 ]

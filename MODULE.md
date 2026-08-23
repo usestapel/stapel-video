@@ -36,16 +36,28 @@
   media server's own `participant_joined` / `participant_left` webhooks —
   the only departure signal that survives a closed laptop — reconciled by a
   **sweeper** so a lost webhook costs one sweep interval instead of an
-  unbounded span, and read back through three comm Functions as unioned
-  presence time and a co-presence matrix. Append-only: a closed span is never
-  reopened or restated, so a product's grace-window policy cannot silently
-  rewrite a billing period. Nothing here prices anything.
+  unbounded span, and read back through five comm Functions as unioned
+  presence time, a co-presence matrix and a per-tenant usage table.
+  Append-only: a closed span is never reopened or restated, so a product's
+  grace-window policy cannot silently rewrite a billing period. Nothing here
+  prices anything.
+- **The scope dimension (0.7.0).** A span also carries an opaque
+  `scope_key` — the partition a report groups by (for a workspace product, the
+  workspace id), set on the **join grant** and echoed back by the provider on
+  every event it reports. NULL, never `""`. It is what makes "who in THIS
+  workspace talked how much, per month" a question this library answers,
+  instead of a join a host writes beside the meter with its own copy of the
+  union arithmetic.
 - **API** — room create/info/join, participants (anchor-paginated), lobby
-  admit/deny (host-only), and a signed provider webhook ingress. DTO/serializer
-  seams + OpenAPI (drf-spectacular).
+  admit/deny (host-only), one tenant's per-month usage
+  (`GET /video/api/v1/scopes/{scope_key}/usage/`, mandate-gated in that very
+  scope), and a signed provider webhook ingress. DTO/serializer seams +
+  OpenAPI (drf-spectacular).
 - **comm surface** — emits `video.egress_ended`, `video.participant.joined`
   and `video.participant.left`; provides `video.presence.aggregate`,
-  `video.presence.spans_export` and `video.presence.pairs_export`; consumes
+  `video.presence.spans_export`, `video.presence.pairs_export`,
+  `video.presence.usage_rollup` and `video.presence.usage_rollup_by_month`;
+  consumes
   `user.deleted` (GDPR) and `profile.changed` (pushes a renamed person's new
   name onto the connections they already hold — the name is a claim frozen
   inside the join token, so a rename otherwise reaches a live call only on
@@ -161,7 +173,7 @@ would make the provider retry a delivery that was perfectly correct. A broken
 overlay entry is `stapel_video.E010` at boot (and skipped-with-a-log at
 runtime, so a typo cannot 500 a live webhook).
 
-### 6. Presence metering — spans, the sweeper, and three Query-Functions
+### 6. Presence metering — spans, the sweeper, and five Query-Functions
 
 `ParticipantSpan` is the unit of truth and everything else is derived. The
 three writers, in descending order of trust: the provider's webhooks, the
@@ -193,6 +205,8 @@ The read side (`schemas/functions/`):
 | `video.presence.aggregate` | `{user_id\|room_key, period}` | `{presence_seconds, rooms_count, users_count, spans_count, …}` |
 | `video.presence.spans_export` | `{cursor, limit, period?}` | `{rows, cursor, total}` — raw spans |
 | `video.presence.pairs_export` | `{period, cursor, limit}` | `{rows, cursor, total}` — `(user_a, user_b, room_key, co_presence_seconds)` |
+| `video.presence.usage_rollup` | `{scope_key, period\|period_start/end, tz?}` | `{rows}` — one row per person in that partition: `presence_seconds`, `rooms`, `connections`, `first_seen`, `last_seen` |
+| `video.presence.usage_rollup_by_month` | `{scope_key, months, tz}` | `{months: [{month, users: [...]}]}` — newest first, buckets cut at LOCAL midnight |
 
 Three rules the numbers depend on:
 
@@ -224,6 +238,59 @@ it (a keyed digest) instead of deleting the rows: the person goes, the
 counters, distinct counts and pair overlaps do not move, and closed reporting
 periods are not silently restated.
 
+### 7. The scope dimension + the per-tenant usage read — `USAGE_MANDATE` / `USAGE_AUTHORIZER`
+
+`ParticipantSpan.scope_key` is the partition a report groups by. Three rules:
+
+- **It is set on the GRANT, not on the event.** A `participant_joined` webhook
+  names a room and a person and never a tenant; the process that minted the
+  token is the one that knew. So `mint_join_token(..., scope_key=...)` puts it
+  in the provider's per-connection metadata
+  (`providers.base.METADATA_SCOPE_KEY`), the provider echoes it back on every
+  webhook and every roster read, and the presence writer copies it onto the
+  span. An out-of-tree `VideoProvider` **must accept the kwarg** (0.7.0's
+  breaking change) and should echo it, or its spans are unscoped.
+- **NULL, never `""`.** `presence.normalize_scope_key` is the one funnel. A
+  host that partitions nothing writes no scope; an empty-string scope would be
+  a tenant the report invented.
+- **History is the host's to place.** Only the host knows which partition a
+  `room_key` belonged to, so the backfill takes the host's resolver:
+
+  ```bash
+  manage.py video_backfill_scope --resolver myapp.reporting.scope_for_room
+  ```
+
+  Idempotent because the population is defined as `scope_key IS NULL` — a
+  crashed run resumes, a second run is a no-op. It is stamped only on rows the
+  ingest CREATES, too: a redelivery carrying a different scope must not move a
+  recorded stay from one tenant's invoice to another's.
+
+`GET /video/api/v1/scopes/{scope_key}/usage/?months=6&tz=Europe/Berlin` is the
+HTTP face of `usage_rollup_by_month`. **Two gates, in order** (`usage.py`):
+
+1. `HasWorkspaceMandateIfScoped` — the same core gate stapel-calendar 0.5.0
+   put on its by-id reads. Refuses anonymous everywhere, refuses the guest
+   state where that state exists, admits everyone in a genuinely standalone
+   deployment, and turns "could not ask" into **503** rather than a verdict.
+2. `usage.may_read_scope` — the caller must hold `USAGE_MANDATE` (default
+   `video.usage.read`) **in the scope named in the URL**, via the workspaces
+   access registry (`workspaces.check_capability`). Holding a mandate
+   *somewhere* is not authority over a workspace id somebody typed.
+
+A scope the caller may not read answers **404**, identically to one that does
+not exist. 403 would confirm a guessed tenant id is real, which is precisely
+the fact the key protects. A scope the caller MAY read with no calls in it is
+a 200 with empty months — once the registry has said yes, "no calls" is a real
+answer and must not look like a permissions bug.
+
+Where nothing can answer the mandate question at all, `USAGE_AUTHORIZER`
+decides — staff-only by default, because that degradation is the operator, not
+everyone. `stapel_video.E011` refuses to boot on a broken path.
+
+Rows carry user **ids**. This library never learns anybody's display name; the
+host resolves it from the roster it already has (the profiles pair, the
+workspaces member list).
+
 ### Settings — `STAPEL_VIDEO` namespace (`conf.py`)
 
 Resolution order per key: `settings.STAPEL_VIDEO[key]` -> flat Django setting ->
@@ -243,6 +310,9 @@ environment variable -> default. Read lazily at call time.
 | `PRESENCE_SWEEP_INTERVAL_SECONDS` | `60` | tuning — also the worst-case over-count of a lost departure |
 | `PRESENCE_SPAN_RETENTION_DAYS` | `400` | tuning (`None` = keep forever), guarded by W004 |
 | `PRESENCE_PURGE_SCHEDULE` | `{"hour": 4, "minute": 10}` | tuning (crontab kwargs); never read from env |
+| `USAGE_MANDATE` | `video.usage.read` | the capability the usage read requires **in the scope asked about** |
+| `USAGE_AUTHORIZER` | `…usage.staff_only_authorizer` | seam (dotted path), the no-workspaces fallback gate, guarded by E011 |
+| `USAGE_THROTTLE` | `60/min` | tuning — rate for this module's own `video-scope-usage` throttle scope |
 
 `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and `DEFAULT_ADMIT_REQUIRED` are the
 three CTO-facing **config axes** (capability-config.md §16), surfaced in

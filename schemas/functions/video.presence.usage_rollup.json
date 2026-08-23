@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.presence.usage_rollup",
+  "description": "One PARTITION's presence over a window, one row per person. `scope_key` is the opaque host partition stamped on the span from the join grant (for a workspace product: the workspace id) — required, and never the empty string, which is not a partition but the absence of one. The window is a calendar month via `period` (\"YYYY-MM\", cut in `tz`, default UTC), or an explicit period_start/period_end ISO pair. Response: {\"scope_key\": string, \"period_start\": string, \"period_end\": string, \"rows\": [{\"user_id\": string, \"presence_seconds\": integer, \"rooms\": integer, \"connections\": integer, \"first_seen\": string, \"last_seen\": string}]}. The list is named `rows` rather than `items` because core's snapshot reader looks for that exact key. It is NOT paged: one partition's month is a screenful, not an export — the cursor-paged surface is video.presence.spans_export. presence_seconds is UNIONED per person exactly as in video.presence.aggregate — a laptop and a phone were one human present, and overlapping connections never double-count. `rooms` is the count of DISTINCT room_keys, not of spans: a person who reconnected nine times to one call attended one call; the reconnects are reported separately as `connections`. first_seen/last_seen are clipped to the window, like the seconds. Rows come back longest-first, then by user id. user_id is an ID — this library never learns anybody's display name, and the caller resolves it from its own roster. No threshold is applied anywhere.",
+  "type": "object",
+  "required": ["scope_key"],
+  "properties": {
+    "scope_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The partition to report on, as stamped on the spans."
+    },
+    "group_by": {
+      "type": ["string", "null"],
+      "enum": ["user", null],
+      "description": "Only \"user\" today. Stated at the call site so a second grouping is additive rather than a signature change."
+    },
+    "period": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}$",
+      "description": "Calendar month, \"YYYY-MM\", cut in `tz`. Takes precedence over period_start/period_end."
+    },
+    "tz": {
+      "type": ["string", "null"],
+      "description": "IANA time zone the month boundaries are LOCAL midnight in (default UTC). The stored instants never move, so the same spans can be re-cut into another zone's months without a migration."
+    },
+    "period_start": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window start (inclusive), for a reporting window that is not a calendar month."
+    },
+    "period_end": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 window end (exclusive)."
+    }
+  },
+  "additionalProperties": false
+}

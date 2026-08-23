@@ -127,12 +127,21 @@ def participants_queryset(room: Room):
 
 
 def _mint_token(room: Room, user, client_session_id: str | None = None) -> str:
+    """Mint the media token for this room, carrying the room's own scope.
+
+    ``scope_key`` rides the grant because the grant is the only moment both
+    facts are in the same process: the room knows its partition, and the
+    provider is what will still be holding it when a webhook reports the stay
+    an hour later. ``Room.scope_key`` is `""` for an unpartitioned host, which
+    the presence writer stores as NULL rather than as a tenant named "".
+    """
     return get_video_provider().mint_join_token(
         room.provider_room_ref or room.join_code,
         user.pk,
         _display_name(user),
         _avatar(user),
         client_session_id,
+        scope_key=room.scope_key or None,
     )
 
 

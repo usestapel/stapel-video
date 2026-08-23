@@ -1,8 +1,8 @@
-# stapel-video 0.6.0
+# stapel-video 0.7.0
 
-Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them.
+Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.
 
-Contract: axes 3 · surface 25 · extension points 10 · operations 7 · error codes 49.
+Contract: axes 3 · surface 31 · extension points 13 · operations 8 · error codes 51.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
@@ -19,6 +19,8 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 ### gate_function
 - admit_participant — stapel_video.services.admit_participant
   The host's yes, as one operation: flips a waiting participant to admitted, mints that guest's join token and pushes lobby.admitted to the room group. A custom host console or moderation bot calls this instead of writing RoomParticipant.status itself — a bare status write admits nobody, because no token is issued and the waiting client is never told.
+- backfill_scope_keys — stapel_video.presence.backfill_scope_keys
+  Stamp scope_key onto spans recorded before the grant carried one, using a host callable room_key -> scope_key|None (the management command video_backfill_scope is its CLI). Idempotent because the population is defined as scope_key IS NULL, so a crashed run resumes and a second run is a no-op — an UPDATE written by hand is neither.
 - close_span — stapel_video.presence.close_span
   instead of: stapel_video.models.ParticipantSpan.save
   End one open span, clamped to be no earlier than its start. A conditional update, so an already-closed span stands and two racing closers resolve to the first — append-only enforced by the database, not by every caller remembering it.
@@ -60,6 +62,10 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   Both scheduled jobs as beat entries on the configured cadences — merge into CELERY_BEAT_SCHEDULE instead of hand-writing task paths, which is how a renamed task becomes a job that silently stopped.
 - lobby_group — stapel_video.realtime.lobby_group
   The Channels group name for a room's lobby. Call it from any consumer or fan-out of your own so your messages land in the group the shipped LobbyConsumer actually joined — the format is not part of the API, and a hand-written f-string stops matching silently the day it changes.
+- month_bounds — stapel_video.presence.month_bounds
+  "2026-08" plus an IANA zone to the half-open month as absolute UTC instants. Use it wherever a report names a month in somebody's local calendar — a hand-rolled first-of-the-month is naive about DST, and the hour it misplaces is the hour a customer disputes.
+- normalize_scope_key — stapel_video.presence.normalize_scope_key
+  The one funnel every writer of ParticipantSpan.scope_key goes through: falsy in, NULL out. Call it before writing a scope from your own ingest path, so "this host partitions nothing" never becomes a tenant whose id is the empty string and whose usage the report happily totals.
 - open_span — stapel_video.presence.open_span
   instead of: stapel_video.models.ParticipantSpan.objects.create
   Record a connection's stay idempotently — for a host feeding presence from something other than the shipped webhook path. A hand-written row skips the dedupe key, so a redelivery becomes a second billable stay.
@@ -71,15 +77,23 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   "2026-08" to the half-open UTC calendar month. Use it wherever a report names a month, so a span ending at midnight on the 1st lands in one month and not in both.
 - presence_aggregate — stapel_video.presence.presence_aggregate
   Unioned presence seconds for one person or one room over a window, in-process — the same computation video.presence.aggregate exposes on the bus, without the round trip. Summing span durations yourself double-counts anybody on two devices.
+- recent_months — stapel_video.presence.recent_months
+  The last N month labels in a zone, newest first — the bucket list a month selector renders. Deriving it from timedelta(days=30) drifts a month out of place twice a year.
 - spans_export — stapel_video.presence.spans_export
   The cursor-paged raw-span snapshot ({rows, cursor, total}) behind video.presence.spans_export. Keyset paging over (joined_at, id) is what lets a full walk finish exactly once while the sweeper is still closing rows.
 - start_egress — stapel_video.services.start_egress
   instead of: livekit.api.LiveKitAPI.egress.start_room_composite_egress, stapel_video.providers.VideoProvider.start_room_egress
   Start recording a room through whichever backend VIDEO_PROVIDER names, writing the file at a storage key the caller owns (typically a stapel-recordings upload session), and hand back the provider egress id to stop it with. Any product that starts recordings on its own schedule calls this: going at the vendor's egress API directly pins the product to one vendor and drops the file where the recordings side is not looking for it.
+- usage_rollup — stapel_video.presence.usage_rollup
+  One PARTITION's window, one row per person — the answer behind a workspace-administration "who talked how much" screen, and the only presence read that groups by scope_key. Reach for it instead of joining the span table to your own rooms and re-deriving the union: seconds are unioned per person (two devices are one human), rooms counts distinct calls rather than spans, and the arithmetic is the same code the invoice-facing aggregate uses.
+- usage_rollup_by_month — stapel_video.presence.usage_rollup_by_month
+  usage_rollup cut into calendar months in a caller-named time zone, newest first — the whole table a usage screen draws, in one call. Month boundaries are LOCAL midnight, so a DST month is genuinely an hour short; slicing UTC months yourself puts an hour of March into April for every workspace that is not on UTC.
 
 ## Extension points — what a product replaces, fork-free
 - SCOPE_PROVIDER [dotted_path]
   Swap how the opaque scope_key (workspace/org/tenant) is resolved from the request and how scope membership is decided — membership is what makes a scope_trusted room auto-admit the caller. The default is a single global scope where every authenticated user is a member.
+- USAGE_AUTHORIZER [dotted_path]
+  Who may read one partition's usage in a deployment with no workspaces to ask (a callable (request, scope_key) -> bool; staff-only by default). Where workspaces IS present it is not consulted at all — the capability named by USAGE_MANDATE goes to the access registry, so a member of one workspace cannot read another's numbers by typing its id into the URL.
 - VIDEO_PROVIDER [dotted_path]
   Swap the video backend (the VideoProvider ABC: mint join token, create room, start/stop recording egress, verify webhook). The default is the LiveKit implementation behind the [livekit] extra; point it at your own backend to change vendor without forking.
 - WEBHOOK_HANDLERS [merge_registry]
@@ -98,14 +112,19 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   Who actually spent time in a call with whom, as one row per pair per room with the raw overlap in seconds. The answer to "how many real conversation partners did this customer have this month", with the "real" threshold left to whoever asks.
 - video.presence.spans_export [comm_function]
   The raw presence intervals, cursor-paged as {rows, cursor, total}. The feed an external billing or analytics service reads: full durations, no threshold applied, so the consumer's pricing rules can change without a release here.
+- video.presence.usage_rollup [comm_function]
+  One tenant's calls, one row per person: unioned minutes, distinct calls attended and distinct connections over any window. The dimension the first three reads did not have — they answer about a person, a room or the whole instance, and a workspace administrator asks about a workspace.
+- video.presence.usage_rollup_by_month [comm_function]
+  The same answer cut into calendar months in the customer's own time zone, newest first — the table a workspace-administration usage screen renders. Boundaries are local midnight, so a month that crosses a daylight-saving change is genuinely an hour short.
 
 ## Fits with — fleet dependencies
 - stapel-auth (optional) — every endpoint but the provider webhook requires an authenticated user (IsAuthenticated); stapel-auth is the shelf's session issuer — any stapel-core-compatible JWT issuer satisfies the check
 - stapel-core (required) — comm bus (video.egress_ended emit; user.deleted and profile.changed consume), JWT authentication (HTTP and Channels), AppSettings config layer, AnchorPagination
 - stapel-profiles (optional) — publishes profile.changed, which video consumes to carry a renamed person's new name onto the connections they already hold — the display name is a claim frozen inside the join token, so without that event a rename reaches a live call only when the person happens to reconnect
 - stapel-recordings (optional) — subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber
+- stapel-workspaces (optional) — answers the two authorization questions the per-scope usage read asks: workspaces.check_mandate (is the caller a principal at all) and workspaces.check_capability (does the caller hold STAPEL_VIDEO['USAGE_MANDATE'] in the scope they named). Without workspaces installed or routed, the read falls back to STAPEL_VIDEO['USAGE_AUTHORIZER'] — staff-only by default
 
-## HTTP operations (7) — call by operationId, never by a typed path
+## HTTP operations (8) — call by operationId, never by a typed path
 Paths are relative to `/video/api/v1/`.
 ### Video
 - POST /rooms — video_api_v1_rooms_create
@@ -114,9 +133,10 @@ Paths are relative to `/video/api/v1/`.
 - POST /rooms/{join_code}/lobby/deny — video_api_v1_rooms_lobby_deny_create
 - GET /rooms/{join_code}/participants — video_api_v1_rooms_participants_retrieve
 - GET /rooms/{join_code} — video_api_v1_rooms_retrieve
+- GET /scopes/{scope_key}/usage/ — video_api_v1_scopes_usage_retrieve
 - POST /webhook — video_api_v1_webhook_create
 
-## Error codes (49) — the StapelError envelope
+## Error codes (51) — the StapelError envelope
 Render `t(code, params)`; branch UX on the remediation. Localized text lives in docs/errors.<lang>.md, not here.
 - error.400.bad_request [400] fix_input
 - error.400.captcha_invalid [400] retry
@@ -138,6 +158,7 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.400.verification_failed [400] verify
 - error.400.verification_invalid_factor [400] verify
 - error.400.video_invalid_access_level [400] fix_input
+- error.400.video_invalid_usage_period [400] fix_input
 - error.400.video_invalid_webhook [400] fix_input
 - error.401.unauthorized [401] reauthenticate
 - error.402.payment_required [402] retry
@@ -153,6 +174,7 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.404.verification_challenge_not_found [404] verify
 - error.404.video_participant_not_found [404] retry
 - error.404.video_room_not_found [404] retry
+- error.404.video_scope_not_found [404] retry
 - error.405.method_not_allowed [405] retry
 - error.406.not_acceptable [406] retry
 - error.408.request_timeout [408] retry
