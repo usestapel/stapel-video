@@ -4,6 +4,105 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-08-26
+
+### Fixed — the lobby socket speaks the fleet's wire, so the browser can hear it
+
+The lobby was built, mounted, authenticated and **silent**. `consumers.py`
+relayed bare `{"type": "lobby.waiting", …}` dicts; the browser client is built
+on `@stapel/realtime`, whose `decodeFrame` requires the v1 envelope
+`{v,type,stream,payload}` and **drops** anything else. So the shipped, tested
+React lobby panel sat in its honest `offline` state while this module believed
+it was announcing arrivals. Two halves of one seam, each green in its own test
+suite — the defect lived in the gap, as they do.
+
+Since 0.9.0 there is one wire shape in the fleet and this module does not own
+any of it:
+
+- **Stream** `video:lobby:<join_code>` — one room's lobby, ephemeral. The
+  scope id is the join code because that is the only identifier this API
+  addresses a room by; a stream keyed on the row id would make a browser
+  holding a join code fetch the room to learn which socket to open.
+- **Emitter** `stapel_core.comm.signal()`. The core builds the envelope, the
+  substrate's transport forwards it verbatim, delivery is scheduled on commit.
+- **Consumer** `stapel_realtime.EphemeralStreamConsumer`. Gone with the old
+  implementation: this module's private close codes, its own membership guard
+  wiring, its own fan-out. What is left is genuinely video's — the stream key,
+  the `authorize()` gate (host or participant row, fail-closed on an unknown
+  room), and the redaction below.
+- **Signal types** `lobby.waiting` / `lobby.admitted` / `lobby.denied`,
+  exported as `LOBBY_SIGNAL_TYPES`. Payload keys are unchanged
+  (`participant_id`, `user_id`, `user_name`, `token`).
+
+### Fixed — one guest's admit token no longer reaches every other guest
+
+`lobby.admitted` carries a media credential for one person, and **every**
+member of the room is on the lobby stream: the old group fan-out handed a
+waiting stranger somebody else's token, which is a join to a call they were
+never admitted to. The consumer now sends the token only to the socket whose
+authenticated user the frame names, and strips it for everyone else — they
+still learn the row changed. A client that missed its own frame re-`POST`s the
+join and is re-admitted with a fresh token, so the credential stays
+recoverable over REST, which is what makes withholding it safe.
+
+### Changed — `stapel-core` floor raised to 0.44.2 (**the browser handshake**)
+
+0.8.0 floored at `>=0.35.0`, and the WebSocket **cookie** branch lands in
+0.44.2. A deployment could satisfy video's floor with a core that closes every
+real browser handshake 4401 — a browser cannot set an `Authorization` header
+on `new WebSocket()` — while a smoke test that sends one passes. That is the
+chat incident verbatim, and this module's socket is on the same stack.
+
+The origin guard ships with the cookie branch, because a cookie is ambient
+authority and reading it without checking `Origin` is Cross-Site WebSocket
+Hijacking. Declare the allowlist once in `STAPEL_REALTIME["ALLOWED_ORIGINS"]`
+(or `STAPEL_WS_ALLOWED_ORIGINS`): core's cookie gate and the substrate's
+`OriginGuard` read the same list, so the two guards cannot disagree.
+
+### Changed — `stapel-realtime` is a base dependency; the extra is `[realtime]`
+
+`stapel-realtime>=0.1.2,<1.0` — the stream keys, the envelope and the consumer
+are all its. Importing it costs nothing without Channels. **Serving** the
+socket is `pip install 'stapel-video[realtime]'`; `[channels]` remains as a
+deprecated alias for one release. New `[test]` extra declares what the suite
+needs (it drives a real `WebsocketCommunicator`).
+
+### Added — `stapel_video.W005`: the half-configured lobby
+
+`stapel_realtime` installed and `STAPEL_COMM["SIGNAL_TRANSPORT"]` unset means
+the socket accepts clients and delivers nothing — a lobby that looks live from
+every side but the guest's. A boot warning now, not a silence. Not having the
+substrate at all is not reported: the lobby is complete over REST.
+
+### Changed — the tests authenticate as a browser
+
+`tests/test_consumer.py` was rewritten. It used to inject `scope["user"]` with
+a stand-in middleware, which proved the membership guard and nothing about the
+handshake that actually happens. It now drives the real stack —
+`build_websocket_application()`, i.e. `OriginGuard` → `JWTAuthMiddlewareStack`
+→ `URLRouter` — with a real minted JWT in a **cookie**, an `Origin`, and an
+assertion that no `Authorization` header is present. Nothing is monkeypatched.
+Arms: the browser handshake admitted; no cookie → 4401; a cookie from an
+unlisted origin → 4403; an authenticated stranger → 4403; an unknown room →
+4403; the exact v1 envelope key-by-key; cross-room isolation; token redaction
+across two sockets; the socket refusing a client write; `hello` → `welcome`.
+228 → **240 tests**.
+
+### Breaking (pre-1.0: minor)
+
+- `realtime.notify_lobby(join_code, message)` → `notify_lobby(join_code, type,
+  payload)`; the type is validated against `LOBBY_SIGNAL_TYPES`.
+- `realtime.lobby_group()` now returns the substrate's group name
+  (`video.lobby.<code>`, derived from the stream key) rather than
+  `video_lobby_<code>`. Reach for `lobby_stream()` unless you are writing a
+  consumer.
+- `consumers.LobbyConsumer` is an `EphemeralStreamConsumer`; a host that
+  subclassed it for the old `_fanout` hook has none.
+- Hosts must add `stapel_realtime` to `INSTALLED_APPS` and set
+  `STAPEL_COMM["SIGNAL_TRANSPORT"] = "channels"` to keep a live lobby, and
+  should replace a hand-written `ProtocolTypeRouter` with
+  `build_websocket_application()`.
+
 ## [0.8.0] — 2026-08-24
 
 ### Fixed — the erasure answers its probe: stapel-video registers as a GDPR data owner

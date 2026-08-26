@@ -1,6 +1,6 @@
 {
   "module": "stapel-video",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.",
   "axes": [
     {
@@ -229,15 +229,22 @@
       "name": "lobby_group",
       "kind": "factory",
       "path": "stapel_video.realtime.lobby_group",
-      "intent": "The Channels group name for a room's lobby. Call it from any consumer or fan-out of your own so your messages land in the group the shipped LobbyConsumer actually joined — the format is not part of the API, and a hand-written f-string stops matching silently the day it changes."
+      "intent": "The Channels group name a room's lobby stream maps to — transport plumbing, derived from the stream key by the realtime substrate. Reach for lobby_stream instead unless you are writing a consumer of your own; the group naming has a length ceiling and a character set, and a hand-written f-string stops matching silently the day either changes."
+    },
+    {
+      "name": "lobby_stream",
+      "kind": "factory",
+      "path": "stapel_video.realtime.lobby_stream",
+      "intent": "The stream key for one room's lobby — video:lobby:<join_code>, the address a browser subscribes to and the one the fan-out publishes on. Call it instead of formatting the key: the scope is part of the name, which is what makes a lobby frame physically unable to reach another room, and one typo in a hand-built key is a socket that connects and never hears anything."
     },
     {
       "name": "notify_lobby",
       "kind": "gate_function",
       "path": "stapel_video.realtime.notify_lobby",
-      "intent": "Push a live event to a room's lobby group — the one call for reaching the clients watching a room, instead of taking the channel layer into your own hands. Note what it deliberately does NOT do: without Channels, or with no channel layer configured, it returns silently. A feature that must not fail quietly (a host kick, a room PIN) pairs it with stapel-core's register_dependency_check and a visible fallback; a silent no-op here is exactly how such a feature spends a day in production doing nothing.",
+      "intent": "Signal one of the three lobby facts (lobby.waiting / lobby.admitted / lobby.denied) to whoever is watching a room — the one call for reaching those clients, instead of taking the channel layer or the wire envelope into your own hands. It emits through stapel-core's signal(), so the frame is the fleet's v1 envelope and delivery waits for the transaction to commit. Note what it deliberately does NOT do: with no SIGNAL_TRANSPORT configured it returns silently. A feature that must not fail quietly (a host kick, a room PIN) pairs it with a visible fallback; a silent no-op here is exactly how such a feature spends a day in production doing nothing.",
       "instead_of": [
-        "channels.layers.get_channel_layer"
+        "channels.layers.get_channel_layer",
+        "stapel_core.comm.signal"
       ]
     },
     {

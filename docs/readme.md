@@ -4,8 +4,12 @@
 - **Admission model** — `public` (anyone with the code joins), `scope_trusted`
   (members of the room's scope join instantly, others wait), `restricted`
   (everyone but the host waits in a lobby).
-- **Realtime lobby** over WebSockets (Channels) — `waiting` / `admitted` /
-  `denied`, authenticated by the same Stapel JWT stack HTTP uses.
+- **Realtime lobby** on the fleet substrate
+  ([stapel-realtime](https://github.com/usestapel/stapel-realtime)) — one
+  ephemeral stream `video:lobby:<join_code>` carrying `lobby.waiting` /
+  `lobby.admitted` / `lobby.denied` on the v1 wire envelope, gated on room
+  membership. A browser opens it with its JWT cookie (no header a browser
+  cannot send), behind the origin guard that ambient credential requires.
 - **Host controls** — admit / deny waiting guests.
 - **Provider seam** — one `VideoProvider` ABC (mint join token, create room,
   start/stop recording egress, verify webhook). Swap vendors without forking.
@@ -30,22 +34,25 @@ Alpha. See [MODULE.md](https://github.com/usestapel/stapel-video/blob/main/MODUL
 ```bash
 pip install stapel-video            # core library
 pip install 'stapel-video[livekit]' # + the default LiveKit backend
-pip install 'stapel-video[channels]'# + the realtime lobby (WebSockets)
+pip install 'stapel-video[realtime]'# + serving the lobby socket
 ```
 
 ```python
 # urls.py
 path("video/", include("stapel_video.urls"))
 
-# asgi.py (realtime lobby)
-from channels.routing import ProtocolTypeRouter, URLRouter
-from stapel_core.django.jwt.channels import JWTAuthMiddlewareStack
-from stapel_video.routing import websocket_urlpatterns
+# settings.py — deliver the lobby signals, and say which pages may open a socket
+INSTALLED_APPS = [..., "stapel_realtime", "stapel_video"]
+STAPEL_COMM = {"SIGNAL_TRANSPORT": "channels"}
+STAPEL_REALTIME = {"ALLOWED_ORIGINS": ["https://app.example.com"]}
 
-application = ProtocolTypeRouter({
-    "http": django_asgi_app,
-    "websocket": JWTAuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
-})
+# asgi.py (realtime lobby) — routes discovered from INSTALLED_APPS
+from django.core.asgi import get_asgi_application
+from stapel_realtime.asgi import build_websocket_application
+
+application = build_websocket_application(
+    http_application=get_asgi_application()
+)
 ```
 
 ## API
@@ -60,6 +67,7 @@ application = ProtocolTypeRouter({
 | POST | `/video/api/rooms/{join_code}/lobby/deny` | Deny a waiting guest (host-only) |
 | GET | `/video/api/v1/scopes/{scope_key}/usage/` | One tenant's per-month, per-person call time (`?months=`/`?month=`, `?tz=`) — mandate-gated in that scope |
 | POST | `/video/api/webhook` | Provider webhook ingress (signed, unauthenticated) |
+| WS | `ws/video/lobby/{join_code}` | The room's lobby stream — `lobby.waiting` / `lobby.admitted` / `lobby.denied`, read-only (see MODULE.md § Live lobby) |
 
 ## Configuration (`STAPEL_VIDEO`)
 

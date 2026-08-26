@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.8.0"
+version = "0.9.0"
 description = "Video calls (rooms, lobby admission, presence metering, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,13 +24,22 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # Floor: 0.35.0 ships stapel_core.gdpr.register_gdpr_owner — the whole
-    # erasure protocol (requested -> erase -> receipt, probe -> alive, the
-    # deprecated user.deleted) that apps.ready() hands one callable to.
-    # (0.27.0 had brought django/scope.py — MandateScopeMixin and
-    # check_shipped_scope_provider, which `is_member` and the system checks
-    # are built on.)
-    "stapel-core>=0.35.0,<1.0",
+    # Floor: 0.44.2 — the WebSocket handshake's COOKIE branch, and the origin
+    # guard that has to ship with it. A browser cannot set an Authorization
+    # header on `new WebSocket()`; the product authenticates with an httpOnly
+    # JWT cookie, and a core below 0.44.2 closes every real browser handshake
+    # 4401 while a smoke test with an Authorization header passes. That is the
+    # chat incident, and this module's lobby socket is on the same stack — so
+    # this is a floor, not a preference: a deployment that satisfies an older
+    # floor has a lobby socket no browser can open.
+    # (0.35.0 had brought stapel_core.gdpr.register_gdpr_owner — the erasure
+    # protocol apps.ready() hands one callable to; 0.27.0 django/scope.py.)
+    "stapel-core>=0.44.2,<1.0",
+    # The WebSocket substrate. Not an extra: since 0.9.0 the lobby speaks the
+    # v1 envelope and nothing else, so the stream keys, the wire shape and the
+    # consumer are all stapel-realtime's. Importing it costs nothing without
+    # Channels — the emit path is stapel_core.comm.signal().
+    "stapel-realtime>=0.1.2,<1.0",
 ]
 
 [project.urls]
@@ -46,10 +55,30 @@ Issues = "https://github.com/usestapel/stapel-video/issues"
 # this — the SDK is imported lazily inside the methods that call it, so a host
 # that swaps VIDEO_PROVIDER for its own backend never needs it.
 livekit = ["livekit-api>=0.7,<1", "requests>=2.28,<3"]
-# Realtime lobby (waiting/admitted/denied) over WebSockets. Mirrors
-# stapel-core's own `channels` extra — HTTP-only hosts pay nothing.
-channels = ["stapel-core[channels]"]
-all = ["livekit-api>=0.7,<1", "requests>=2.28,<3", "stapel-core[channels]"]
+# Serving the lobby socket (waiting/admitted/denied) needs Channels, which
+# comes through the substrate now rather than through core directly — one ASGI
+# stack, one close-code table. Emitting stays free: an HTTP-only host installs
+# none of this and its clients read the lobby over REST.
+realtime = ["stapel-realtime[channels]>=0.1.2,<1.0"]
+# Deprecated alias kept for one release (0.8.0 and earlier spelled it this way).
+channels = ["stapel-realtime[channels]>=0.1.2,<1.0"]
+all = [
+    "livekit-api>=0.7,<1",
+    "requests>=2.28,<3",
+    "stapel-realtime[channels]>=0.1.2,<1.0",
+]
+# What the TEST SUITE needs, as opposed to what the package needs. The browser
+# handshake tests drive a real WebsocketCommunicator, and importing anything
+# from channels.testing executes that package's __init__ (daphne) — hence the
+# substrate's `testing` extra rather than plain channels.
+test = [
+    "pytest",
+    "pytest-django",
+    "pytest-asyncio",
+    "pytest-cov",
+    "stapel-realtime[channels,testing]>=0.1.2,<1.0",
+    "stapel-tools>=0.9.1,<1",
+]
 
 [tool.setuptools]
 package-dir = {"stapel_video" = "."}

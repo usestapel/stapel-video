@@ -1,15 +1,32 @@
-"""Channels routing for the realtime lobby (optional ``channels`` extra).
+"""Channels routes — discovered, not hand-wired.
 
-Mount in the host ASGI app under the JWT auth middleware (G14)::
+``stapel_realtime.build_websocket_application()`` walks INSTALLED_APPS and
+collects every ``<app>.routing.websocket_urlpatterns``, so a host that
+assembles its ASGI app the canonical way gets the lobby socket without naming
+it::
 
-    from channels.routing import ProtocolTypeRouter, URLRouter
-    from stapel_core.django.jwt.channels import JWTAuthMiddlewareStack
-    from stapel_video.routing import websocket_urlpatterns
+    # asgi.py — the whole file
+    from django.core.asgi import get_asgi_application
+    from stapel_realtime.asgi import build_websocket_application
 
-    application = ProtocolTypeRouter({
-        "http": django_asgi_app,
-        "websocket": JWTAuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
-    })
+    application = build_websocket_application(
+        http_application=get_asgi_application()
+    )
+
+That builds ``OriginGuard(JWTAuthMiddlewareStack(URLRouter(patterns)))`` — the
+origin guard included, which the hand-written ``ProtocolTypeRouter`` this
+module used to ask for did not have. A browser authenticates this socket with
+its JWT **cookie**, and a cookie is ambient authority: the guard is what
+stands between a cookie-authenticated socket and cross-site hijacking, so it
+is not an optional layer to compose by hand.
+
+One mount:
+
+    ws/video/lobby/<join_code>    one room's lobby (ephemeral)
+
+The join code in the path is the stream's scope id — ``video:lobby:<code>`` —
+and it is not a secret: subscription is authorized separately and fail-closed
+(:mod:`stapel_video.consumers`).
 """
 from django.urls import path
 

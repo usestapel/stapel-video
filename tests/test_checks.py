@@ -97,3 +97,29 @@ def test_non_provider_is_error():
 def test_bad_default_access_level_is_error():
     errors = checks.check_default_access_level(None)
     assert errors and errors[0].id == "stapel_video.E005"
+
+
+# ── W005: the half-configured lobby socket ──────────────────────────────
+#
+# The suite runs with SIGNAL_TRANSPORT = "channels" (that is the deployment
+# this module is built for), so the silent-socket arm is reached by taking it
+# away — which is exactly the deployment that shipped in 0.8.0.
+
+
+def test_a_served_lobby_stream_with_no_transport_is_a_warning():
+    with override_settings(STAPEL_COMM={"SIGNAL_TRANSPORT": "none"}):
+        msgs = checks.check_lobby_stream_is_deliverable(None)
+    assert [m.id for m in msgs] == ["stapel_video.W005"]
+
+
+def test_a_configured_transport_is_silent():
+    assert checks.check_lobby_stream_is_deliverable(None) == []
+
+
+def test_a_host_without_the_substrate_is_not_scolded():
+    """No socket served is not a defect: the lobby is complete over REST."""
+    from unittest.mock import patch
+
+    with patch("django.apps.apps.is_installed", return_value=False):
+        with override_settings(STAPEL_COMM={"SIGNAL_TRANSPORT": "none"}):
+            assert checks.check_lobby_stream_is_deliverable(None) == []

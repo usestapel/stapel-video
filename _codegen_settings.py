@@ -63,6 +63,11 @@ def settings_kwargs(
             "stapel_core.django.users",
             "rest_framework",
             "drf_spectacular",
+            # The WebSocket substrate: its AppConfig.ready() registers the
+            # "channels" signal transport the lobby stream is delivered on,
+            # and its system checks are what tell a host its socket is
+            # misconfigured. An unregistered check is a comment.
+            "stapel_realtime",
             "stapel_video",
         ],
         AUTH_USER_MODEL="users.User",
@@ -87,11 +92,22 @@ def settings_kwargs(
             "OUTBOX_ENABLED": False,
             "ACTION_TRANSPORT": "inprocess",
             "VALIDATE_SCHEMAS": True,
+            # Lobby signals are delivered, not dropped: without this the
+            # socket accepts clients and never says anything (W005).
+            "SIGNAL_TRANSPORT": "channels",
         },
         # In-memory channel layer for the realtime lobby consumer tests.
         CHANNEL_LAYERS={
             "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
         },
+        # The origin allowlist, declared ONCE. A cookie is ambient authority,
+        # so core refuses a cookie-authenticated handshake from a page this
+        # deployment does not serve (an empty list is a misconfiguration, not
+        # a wildcard) and the substrate's OriginGuard refuses the same
+        # handshake one layer earlier. Both read this list — core falls back
+        # to STAPEL_REALTIME["ALLOWED_ORIGINS"] on purpose, so the two guards
+        # cannot disagree.
+        STAPEL_REALTIME={"ALLOWED_ORIGINS": ["https://app.example.test"]},
         # Test video provider (no network) — overridden per-test where needed.
         STAPEL_VIDEO={
             "VIDEO_PROVIDER": "stapel_video.tests.fakeprovider.FakeProvider",

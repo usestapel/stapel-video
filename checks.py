@@ -24,6 +24,9 @@ cannot run with; W-level for entries that only degrade lazily.
 - The presence sweeper / span retention not scheduled in a deployment that
   drives a beat schedule -> W. Both are jobs whose absence is invisible:
   unswept spans stay open and keep counting, unpurged spans just accumulate.
+- The realtime substrate installed with no signal transport configured -> W.
+  The lobby socket then accepts clients and delivers nothing, which looks
+  exactly like a working socket from every side but the guest's.
 """
 from django.core import checks
 from stapel_core.django.scope import check_shipped_scope_provider
@@ -353,6 +356,56 @@ def check_presence_retention_is_scheduled(app_configs, **kwargs):
                 "None to state that this deployment keeps spans indefinitely."
             ),
             id="stapel_video.W004",
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_lobby_stream_is_deliverable(app_configs, **kwargs):
+    """W005: a lobby socket that accepts clients and never says anything.
+
+    The failure this exists for is the quiet one, and this module has already
+    shipped it once: ``stapel_realtime`` in INSTALLED_APPS means the host
+    meant to serve the lobby stream, so the consumer connects, authorizes and
+    sits there — but the frames are emitted through
+    ``stapel_core.comm.signal()``, which is a **silent no-op** until
+    ``STAPEL_COMM["SIGNAL_TRANSPORT"]`` names a transport. Nothing errors and
+    nothing logs: the socket is up, the lobby never moves, and the only
+    symptom is a host clicking Admit while the guest's screen still says
+    "waiting".
+
+    Not having the substrate at all is not a defect and is not reported: the
+    lobby is complete over REST, and an HTTP-only host's clients re-read it.
+    The warning is for the half-configured middle.
+    """
+    from django.apps import apps
+
+    if not apps.is_installed("stapel_realtime"):
+        return []
+
+    # The core's own resolution, not a re-reading of the setting: "none", an
+    # empty value and an unresolvable dotted path all mean "signals are
+    # dropped on this host", and only signal_transport() knows all three.
+    from stapel_core.comm import signal_transport
+
+    if signal_transport() is not None:
+        return []
+
+    return [
+        checks.Warning(
+            "stapel_realtime is installed, so the lobby socket "
+            "(ws/video/lobby/<join_code>) will accept clients — but "
+            "STAPEL_COMM['SIGNAL_TRANSPORT'] is unset, so signal() is a "
+            "no-op and no lobby frame is ever delivered. Every guest sits on "
+            "a silent socket and only learns the host's verdict by "
+            "re-posting the join.",
+            hint=(
+                "Set STAPEL_COMM['SIGNAL_TRANSPORT'] = 'channels' (with "
+                "CHANNEL_LAYERS configured), or drop stapel_realtime from "
+                "INSTALLED_APPS and let clients read the lobby over REST "
+                "deliberately."
+            ),
+            id="stapel_video.W005",
         )
     ]
 

@@ -20,11 +20,15 @@
   lobbies. A `denied` guest is sticky (re-join stays denied); a `left` guest is
   auto-readmitted. A host who drops the lobby (`admit_required=False`) lets
   anyone in.
-- **Realtime lobby** — a Channels `LobbyConsumer` on
-  `stapel_core.django.jwt.channels` (G14): a guest connects to receive live
-  `waiting`/`admitted`/`denied` decisions, a host to see arrivals. Auth is the
-  same Stapel JWT as HTTP; the consumer additionally enforces room membership.
-  Channels is an optional extra — HTTP-only hosts poll instead.
+- **Realtime lobby, on the fleet substrate (0.9.0)** — one ephemeral Signal
+  stream, `video:lobby:<join_code>`, carrying `lobby.waiting` /
+  `lobby.admitted` / `lobby.denied` on the **v1 wire envelope**. A guest
+  watches it for the host's verdict, a host for arrivals. The socket is
+  `stapel_realtime.EphemeralStreamConsumer` — one auth stack, one close-code
+  table, one envelope for the whole fleet — and this module supplies only the
+  stream key, the membership gate and the token redaction. See § Live lobby
+  for the wire contract. Serving it is the `[realtime]` extra; emitting is
+  free and HTTP-only hosts read the lobby over REST.
 - **Recording egress — a SEAM, not a pipeline.** `start_egress`/`stop_egress`
   proxy the provider; the webhook path emits `video.egress_ended` (with the
   storage key) for stapel-recordings to finalize. This library ships no
@@ -407,10 +411,76 @@ Regenerate after any serializer/view/url/error change:
 
 then commit `docs/{schema,flows,errors,capabilities}.json`.
 
+## Live lobby — the stream, the frames, and what to do without it
+
+Since 0.9.0 the lobby is delivered on the fleet's realtime substrate. Nothing
+about its wire shape is this module's invention any more.
+
+| | |
+|---|---|
+| Stream | `video:lobby:<join_code>` — one room's lobby, ephemeral |
+| Socket | `ws/video/lobby/<join_code>`, read-only for the client |
+| Envelope | v1: `{"v":1,"type":…,"stream":…,"payload":{…}}`. **No `seq`** — this is a Signal, not a journal, and frame kind is structural |
+| Types | `lobby.waiting`, `lobby.admitted`, `lobby.denied` (`stapel_video.realtime.LOBBY_SIGNAL_TYPES`) |
+| Gate | `authorize()` = membership of that room (host, or a participant row) — fail-closed on an unknown room or an unparseable key |
+| Close codes | The substrate's table: 4401 unauthenticated, 4403 forbidden *or unlisted origin*, 4404 unknown stream, 4410 revoked, 4413 overflow |
+
+Payloads, exactly as the browser reads them:
+
+    lobby.waiting   {participant_id, user_id, user_name}
+    lobby.admitted  {participant_id, user_id, token?}
+    lobby.denied    {participant_id, user_id}
+
+**`token` is addressed, not broadcast.** Every member of the room is on this
+stream, and the admit token is a media credential for exactly one of them. The
+consumer sends it to the socket whose authenticated user matches
+`payload.user_id` and strips it for everyone else — a waiting guest learns
+that a row changed, never how to walk into the call as somebody else. A client
+that missed its own frame re-`POST`s the join and is re-admitted with a fresh
+token; the credential is always recoverable over REST, which is why it may be
+withheld here.
+
+**A browser authenticates this socket with its cookie.** `new WebSocket()`
+takes no headers, so the handshake carries the httpOnly JWT cookie and nothing
+else — the branch that lands in **stapel-core 0.44.2**, which is why that is
+this module's floor and not a preference. A cookie is ambient authority, so
+the origin allowlist ships with it: declare it once in
+`STAPEL_REALTIME["ALLOWED_ORIGINS"]` (or `STAPEL_WS_ALLOWED_ORIGINS`) and both
+the substrate's `OriginGuard` and core's cookie gate read the same list. An
+empty list is a misconfiguration, not a wildcard: cookie handshakes are
+refused 4403 and `stapel_core.jwt.E001` says so at boot.
+
+Assemble the host's socket stack the canonical way — routes are discovered
+from `INSTALLED_APPS`, so nothing names this module:
+
+    # asgi.py — the whole file
+    from django.core.asgi import get_asgi_application
+    from stapel_realtime.asgi import build_websocket_application
+
+    application = build_websocket_application(
+        http_application=get_asgi_application()
+    )
+
+**Without the socket the product still works**, and that is deliberate:
+`stapel_core.comm.signal()` is a silent no-op with no
+`STAPEL_COMM["SIGNAL_TRANSPORT"]`, the lobby is readable at
+`GET /rooms/{join_code}/lobby`, and a guest's own status comes back from the
+join. What is *not* supported is the half-configured middle — the substrate
+installed and the transport unset, where the socket accepts clients and
+delivers nothing. That is `stapel_video.W005` at boot rather than a lobby that
+looks live and is not.
+
 ## Anti-patterns
 
 - **Don't build a recording pipeline in this module or import a recordings
   model.** Subscribe to `video.egress_ended` — that boundary is the point.
+- **Don't hand-write an `asgi.py` for this socket** or wrap the router in your
+  own `ProtocolTypeRouter`. That is how the fleet ended up with three auth
+  stacks and three close-code sets — and, in the deployment that prompted
+  0.9.0, with a lobby the client could not decode.
+- **Don't put a credential on the stream and trust the client to ignore it.**
+  A frame reaches every subscriber the gate admits; anything narrower than the
+  gate is redacted in the consumer.
 - **Don't call a provider SDK directly.** Everything vendor-specific is behind
   the `VideoProvider` seam; the LiveKit SDK is imported lazily so the default
   path resolves without the extra.

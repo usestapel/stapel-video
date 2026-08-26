@@ -22,7 +22,12 @@ from .models import (
     generate_join_code,
 )
 from .providers import get_video_provider
-from .realtime import notify_lobby
+from .realtime import (
+    SIGNAL_ADMITTED,
+    SIGNAL_DENIED,
+    SIGNAL_WAITING,
+    notify_lobby,
+)
 from .scope import get_scope_provider
 
 
@@ -236,8 +241,8 @@ def _wait(room: Room, participant: RoomParticipant, user) -> dict:
     """Park in the lobby and let the host clients see the arrival."""
     notify_lobby(
         room.join_code,
+        SIGNAL_WAITING,
         {
-            "type": "lobby.waiting",
             "participant_id": str(participant.id),
             "user_id": str(user.pk),
             "user_name": _display_name(user),
@@ -272,10 +277,12 @@ def admit_participant(room: Room, participant_id) -> RoomParticipant | None:
     token = _mint_token(room, participant.user)
     notify_lobby(
         room.join_code,
+        SIGNAL_ADMITTED,
         {
-            "type": "lobby.admitted",
             "participant_id": str(participant.id),
             "user_id": str(participant.user_id),
+            # Reaches the admitted guest's own socket only — the consumer
+            # strips it for every other member of the room.
             "token": token,
         },
     )
@@ -292,8 +299,8 @@ def deny_participant(room: Room, participant_id) -> RoomParticipant | None:
     participant.save(update_fields=["status"])
     notify_lobby(
         room.join_code,
+        SIGNAL_DENIED,
         {
-            "type": "lobby.denied",
             "participant_id": str(participant.id),
             "user_id": str(participant.user_id),
         },
