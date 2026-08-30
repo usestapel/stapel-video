@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stapel-video"
-version = "0.9.0"
+version = "0.10.0"
 description = "Video calls (rooms, lobby admission, presence metering, recording-egress seam) for the Stapel framework"
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,7 +34,7 @@ dependencies = [
     # floor has a lobby socket no browser can open.
     # (0.35.0 had brought stapel_core.gdpr.register_gdpr_owner — the erasure
     # protocol apps.ready() hands one callable to; 0.27.0 django/scope.py.)
-    "stapel-core>=0.44.2,<1.0",
+    "stapel-core>=0.52.1,<1.0",
     # The WebSocket substrate. Not an extra: since 0.9.0 the lobby speaks the
     # v1 envelope and nothing else, so the stream keys, the wire shape and the
     # consumer are all stapel-realtime's. Importing it costs nothing without

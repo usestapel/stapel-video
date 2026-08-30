@@ -4,6 +4,74 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-08-30
+
+### Fixed — a merge is not a delete: the guest's call, and the meter, follow the survivor
+
+This module knew half of an account's life cycle. `user.deleted` was answered
+from the erasure protocol; `user.merged` — stapel-auth folding an anonymous
+guest into an existing account when the guest signs in — was not answered at
+all, and silence there is not neutrality, it is a wrong answer given quietly.
+
+Two failures, one cause. `Room.created_by` and `RoomParticipant.user` are
+`CASCADE`, so when auth deleted the absorbed guest row the call that visitor
+had opened before signing in went with it — nothing raised, nothing retried,
+and no erasure was ever requested for the rows. `ParticipantSpan` holds no FK
+and so survived, which was worse: the meter kept counting one human as two
+billable people, and double-counted the wall-clock overlap of the very call
+they signed in during.
+
+`stapel_video.actions.handle_user_merged` now carries all three onto the
+survivor in one transaction:
+
+- **`Room.created_by`** — plain rewrite; no constraint is scoped to the
+  creator.
+- **`RoomParticipant.user`** — deduplicated against `video_participant_uniq`
+  first. Where both accounts hold a row in one room the survivor's own
+  admission stays, with its status and role, and the guest's is dropped
+  rather than reassigned into a constraint violation. Nobody is ejected by
+  that drop: an admission is state, re-derivable by knocking again, while a
+  live connection lives on the provider and in the meter — and the meter
+  moves.
+- **`ParticipantSpan.user_id`** — re-keyed.
+
+**On re-keying the ledger,** which erasure deliberately refuses to delete.
+The rule for this table is *scrub the person, keep the counters*, and a merge
+serves that rule rather than breaking it. Every span keeps its room, its
+scope, its instants and its duration: total metered time does not move by a
+second, and no per-room or per-scope rollup changes. The only figures that
+change are the ones counted *per person*, and they change toward the truth —
+time is unioned per user precisely so that two devices are not two billable
+people, and a guest promoted into an account was never two people either.
+Refusing the re-key would not protect a closed period, it would knowingly
+keep billing one person twice. A span already pseudonymized by an erasure
+carries no original id, so the exact-id filter never matches it and it stays
+erased; `video_span_uniq` is `(connection_id, joined_at)` and not
+user-scoped, so no re-key can collide.
+
+A guest who owns nothing here is a quiet no-op — the common case, and also
+the at-least-once idempotency path. A guest whose only trace is metered time
+is merged immediately without waiting on a user projection, because the meter
+is a `CharField` with nothing to point at. A guest who owns rooms or
+admissions while the survivor has no user row here yet raises
+`MergeTargetNotReady`, which the comm layer turns into a redelivery:
+returning success would let the outbox mark the event delivered and lose the
+rooms for good. A malformed id is neither — it names no row and no
+redelivery can fix it, so it is logged and dropped instead of replayed as a
+poison pill (`UUIDField` raises `ValidationError`, which is not a
+`ValueError`; both are caught).
+
+### Changed — `stapel-core>=0.52.1`
+
+Core 0.52.1 adds the `stapel_core.lifecycle.E001` system check (tag
+`stapel_lifecycle`): an app that subscribes `user.deleted` and not
+`user.merged` is a boot-time ERROR. This module's `user.deleted` subscriber
+is a closure core registers on its behalf from `register_gdpr_owner`, and
+core stamps it with this module's name so the pair is charged here rather
+than to core — which is exactly what `tests/test_user_merged.py::
+TestSubscription::test_the_lifecycle_pair_check_is_green` asserts. The floor
+is raised so that gate can never be skipped for want of the check.
+
 ## [0.9.0] — 2026-08-26
 
 ### Fixed — the lobby socket speaks the fleet's wire, so the browser can hear it

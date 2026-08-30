@@ -62,7 +62,9 @@
   `video.presence.spans_export`, `video.presence.pairs_export`,
   `video.presence.usage_rollup` and `video.presence.usage_rollup_by_month`;
   consumes
-  `user.deleted` (GDPR) and `profile.changed` (pushes a renamed person's new
+  `user.deleted` (GDPR), `user.merged` (a guest account absorbed into an
+  existing one — rooms, admissions and the meter follow the survivor) and
+  `profile.changed` (pushes a renamed person's new
   name onto the connections they already hold — the name is a claim frozen
   inside the join token, so a rename otherwise reaches a live call only on
   reconnect).
@@ -383,6 +385,48 @@ nothing.
 **Comm surface of the protocol.** Consumes `gdpr.erasure.requested`,
 `gdpr.owner.probe`, `user.deleted` (deprecated); emits `gdpr.section.erased`,
 `gdpr.owner.alive`. Contracts in `schemas/consumes/` and `schemas/emits/`.
+
+### A merge is not a delete — `user.merged` (`actions.py`)
+
+The other half of an account's life cycle, and the one an app that only
+knows `user.deleted` gets silently wrong. stapel-auth folds an anonymous
+guest into an existing account on sign-in and then deletes the guest row;
+`Room.created_by` and `RoomParticipant.user` are `CASCADE`, so the room the
+visitor opened before signing in goes with them and no erasure is ever
+requested for it. `ParticipantSpan` has no FK and survives — and keeps
+metering one human as two billable people, which is the same defect wearing
+a different face. `stapel_video.actions.handle_user_merged` re-points all
+three onto the survivor in one transaction:
+
+| Model | Column | Rule |
+|---|---|---|
+| `Room` | `created_by` | plain rewrite; no constraint is scoped to the creator |
+| `RoomParticipant` | `user` | deduplicated against `video_participant_uniq` — where both accounts hold a row in one room the survivor's own admission stays and the guest's is dropped |
+| `ParticipantSpan` | `user_id` | re-keyed, see below |
+
+**Why the meter is re-keyed here, when erasure refuses to touch it.** The
+ledger rule is *scrub the person, keep the counters*, and a merge serves it
+rather than breaking it: every span keeps its room, its scope, its instants
+and its duration, so total metered time does not move by a second and no
+per-room or per-scope rollup changes. Only the figures counted *per person*
+move, and they move toward the truth — time is unioned per user precisely so
+that two devices are not two billable people, and a guest promoted into an
+account was never two people either. Leaving the spans behind would bill one
+human twice and double-count the wall-clock overlap of the very call they
+signed in during. A span already pseudonymized by an erasure carries no
+original id, so the exact-id filter never matches it and it stays erased.
+
+A guest who owns nothing here is a quiet no-op (also the at-least-once
+idempotency path). A guest who owns rooms or admissions while the survivor
+has no user row here yet raises `MergeTargetNotReady` so the outbox
+redelivers. A guest whose only trace is metered time needs no survivor row
+at all — the meter is a `CharField` with nothing to point at — and is merged
+immediately. A malformed id is logged and dropped: no redelivery can fix a
+typo.
+
+`stapel_core.lifecycle.E001` (tag `stapel_lifecycle`, stapel-core 0.52.1)
+is the fleet-wide gate on that pair, and `tests/test_user_merged.py` asserts
+it green in this repo.
 
 ### Admin categories — `@access` declarations (admin-suite AS-5)
 
