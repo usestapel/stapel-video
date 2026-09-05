@@ -153,6 +153,18 @@ DEFAULTS = {
     # happened everywhere before the oracle existed. "" asks nobody, same
     # effect, stated on purpose.
     "CALL_PRESENCE_FUNCTION": "realtime.is_live",
+    # Comm Function that answers "does the issuer know this user id, and what
+    # are their claims", asked ONLY when the callee has no row in this
+    # service's shadow users table. A NAME, not an import: identity is
+    # somebody else's process. The answer is applied with
+    # `get_or_create_user_from_jwt` — the function the JWT middleware and the
+    # `user.created` projection both write shadow rows with — so a mirrored
+    # callee passes the same tombstone and deactivation gates an
+    # authenticated caller does. "" asks nobody, and a callee this service
+    # has not met yet is refused, which was the behaviour before 0.11.2:
+    # the first call to a seconds-old account answered `invalid_callee` and
+    # a retry worked, because the projection had not landed yet.
+    "CALL_USER_LOOKUP_FUNCTION": "auth.user_projection",
     # ── LiveKit default-provider credentials (tuning knobs, not axes) ──
     "LIVEKIT_URL": "",
     # Where the BROWSER connects — which is not where we connect. On a
@@ -162,6 +174,18 @@ DEFAULTS = {
     # back to LIVEKIT_URL, which is right for a deployment where they are the
     # same address and wrong silently for one where they are not — hence
     # stapel_video.W007.
+    #
+    # Resolved PER REQUEST since 0.11.2, in three forms (stapel_video.
+    # client_url), because one image can serve two brand hosts and one
+    # global string sends half its browsers across a brand boundary their
+    # cookies, CSP and TLS name do not cross:
+    #   "wss://media.example.com"  — one address for every host (as before);
+    #   "/rtc"                     — the REQUEST's own host, wss/ws by
+    #                                whether the request was secure;
+    #   {"a.example": "...", "default": "..."} — per host, with a default;
+    #                                an unlisted host with no default is
+    #                                answered "" rather than another brand's.
+    # The mapping form can only come from settings (an env var is a string).
     "LIVEKIT_CLIENT_URL": "",
     "LIVEKIT_API_KEY": "",
     "LIVEKIT_API_SECRET": "",

@@ -243,8 +243,28 @@ class VideoProvider(ABC):
         own means. Raise nothing: a caller that cannot learn the URL still has
         a valid token, and a boot check is where an unconfigured deployment
         should find out.
+
+        Since 0.11.2 the per-request :meth:`client_url_for` is what the call
+        endpoints actually ask; this stays the answer for a mint with no
+        request in hand, and the one an out-of-tree provider need implement.
         """
         raise NotImplementedError
+
+    def client_url_for(self, request=None) -> str:
+        """The browser-facing address for the request being answered.
+
+        One image serving two brand hosts has two browser-facing addresses,
+        and a process-wide constant hands half its users the other brand's —
+        cookies, CSP and TLS name all crossing a boundary they were scoped
+        to. So the question is asked per request.
+
+        The default delegates to :meth:`client_url`, which is exactly right
+        for a provider whose answer does not depend on who asked: an
+        out-of-tree provider written against 0.11.0 keeps working unchanged
+        and answers one address, as it did. Override when the address is a
+        function of the host.
+        """
+        return self.client_url()
 
     # ── Room metadata ──────────────────────────────────────────────────
 

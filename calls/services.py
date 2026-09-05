@@ -187,22 +187,39 @@ def create_call(
         raise CallProviderUnavailable(str(exc)) from exc
 
     _ring(call)
-    return call, token, _client_url()
+    return call, token, _client_url(request)
 
 
 def _resolve_callee(caller, callee_id):
+    """The person being rung — mirrored from the issuer if we have not met them.
+
+    A local miss is NOT a verdict (Д320 class). This service holds a shadow
+    ``users`` table filled by the JWT middleware for whoever is holding the
+    token, plus the owner's ``user.created`` projection for everybody else —
+    and the projection is asynchronous. The first call to a seconds-old
+    account therefore answered ``invalid_callee`` and a retry worked, which
+    is a race dressed up as a bad request. So a missing row asks the issuer
+    before refusing; only an id the issuer does not know either is refused.
+    """
     from django.contrib.auth import get_user_model
 
     if not callee_id:
         raise InvalidCallee("callee_id is required")
     if str(callee_id) == str(caller.pk):
         raise InvalidCallee("a call needs two people")
+    malformed = False
     try:
         callee = get_user_model().objects.filter(pk=callee_id).first()
     except Exception:
         # A malformed pk (a non-UUID where the user model wants one) raises
-        # from the queryset, and it is the same fact as "no such user".
-        callee = None
+        # from the queryset, and it is the same fact as "no such user" — no
+        # issuer can hold an id this table cannot even express, so it is not
+        # worth a round trip.
+        callee, malformed = None, True
+    if callee is None and not malformed:
+        from .mirror import mirror_user
+
+        callee = mirror_user(callee_id)
     if callee is None:
         raise InvalidCallee(f"no such user: {callee_id}")
     return callee
@@ -298,7 +315,9 @@ def _mint(call: Call, user, client_session_id: str | None) -> str:
         )
 
 
-def mint_token_for(call: Call, user, client_session_id: str | None = None) -> tuple[str, str]:
+def mint_token_for(
+    call: Call, user, client_session_id: str | None = None, request=None
+) -> tuple[str, str]:
     """Re-mint a live call's credential for one of its parties.
 
     Behind ``POST /calls/{id}/token``, and it exists because a media token is
@@ -307,11 +326,17 @@ def mint_token_for(call: Call, user, client_session_id: str | None = None) -> tu
     back from a tunnel, and the failure looks like a network fault rather
     than an expiry.
     """
-    return _mint(call, user, client_session_id), _client_url()
+    return _mint(call, user, client_session_id), _client_url(request)
 
 
-def _client_url() -> str:
+def _client_url(request=None) -> str:
     """Where the browser connects. Not where WE connect.
+
+    Asked with the REQUEST since 0.11.2: one image serving two brand hosts
+    has two browser-facing addresses, and a process-wide constant sent every
+    browser to the primary brand's socket — across the cookie, CSP and TLS
+    boundary the secondary brand was scoped to. The provider decides which
+    address that is; this only carries the question to it.
 
     A provider that cannot answer returns "" rather than raising: the token
     is still valid and a host may be serving the media URL to its front by
@@ -319,8 +344,15 @@ def _client_url() -> str:
     is handing browsers an address only this process can reach — at boot,
     rather than from a client that mints a good token and never connects.
     """
+    provider = get_video_provider()
+    # getattr, not a bare call: a duck-typed out-of-tree provider written
+    # against 0.11.0 has only ``client_url``, and a release that started
+    # raising AttributeError at it would break calls in order to fix a URL.
+    per_request = getattr(provider, "client_url_for", None)
     try:
-        return get_video_provider().client_url() or ""
+        if per_request is not None:
+            return per_request(request) or ""
+        return provider.client_url() or ""
     except NotImplementedError:
         return ""
     except Exception:
@@ -331,7 +363,9 @@ def _client_url() -> str:
 # ── Transitions ────────────────────────────────────────────────────────────
 
 
-def accept_call(call: Call, user, client_session_id: str | None = None) -> tuple[Call, str, str]:
+def accept_call(
+    call: Call, user, client_session_id: str | None = None, request=None
+) -> tuple[Call, str, str]:
     """The callee picks up. Returns ``(call, token, url)`` for the CALLEE."""
     if str(call.callee_id) != str(user.pk):
         raise CallNotAllowed("only the callee may accept a call")
@@ -373,7 +407,7 @@ def accept_call(call: Call, user, client_session_id: str | None = None) -> tuple
         SIGNAL_ACCEPTED,
         {"call_id": str(call.id), "answered_at": now.isoformat()},
     )
-    return call, token, _client_url()
+    return call, token, _client_url(request)
 
 
 def decline_call(call: Call, user) -> Call:

@@ -206,7 +206,7 @@ class CallAcceptView(_CallActionView):
             return err
         try:
             call, token, url = services.accept_call(
-                call, request.user, self._session_id(request)
+                call, request.user, self._session_id(request), request=request
             )
         except services.CallNotAllowed:
             # The caller trying to accept their own call is not a party
@@ -291,7 +291,7 @@ class CallTokenView(_CallActionView):
         if not call.is_live:
             return StapelErrorResponse(409, ERR_409_CALL_STATE)
         token, url = services.mint_token_for(
-            call, request.user, self._session_id(request)
+            call, request.user, self._session_id(request), request=request
         )
         response_cls = self.get_response_serializer_class()
         return StapelResponse(response_cls(MediaTokenResponse(token=token, url=url)))

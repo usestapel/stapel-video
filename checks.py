@@ -489,22 +489,25 @@ def check_call_client_url_is_reachable_by_a_browser(app_configs, **kwargs):
     use — a ``host.docker.internal`` / ``localhost`` host, or a plain
     ``http://``. A deployment where both are ``wss://example.com/rtc`` is
     correct and is not nagged.
+
+    Since 0.11.2 the setting is resolved per request and may be a ``{host:
+    url}`` mapping (:mod:`stapel_video.client_url`), which brings one more
+    way to be silently wrong: a mapping with **no** ``default`` answers ""
+    for every host it does not name, so a brand added to the proxy and
+    forgotten here mints tokens for a call that cannot be dialled. That is
+    warned about here too. A mapping's values are checked for the same
+    unreachable-from-a-browser addresses as the fallback.
     """
     from .conf import video_settings
+    from .client_url import DEFAULT_KEY
 
-    if video_settings.LIVEKIT_CLIENT_URL:
+    configured = video_settings.LIVEKIT_CLIENT_URL
+    if isinstance(configured, dict):
+        return _check_client_url_mapping(configured, DEFAULT_KEY)
+    if configured:
         return []
     url = (video_settings.LIVEKIT_URL or "").strip()
-    if not url:
-        return []
-    suspicious = (
-        "host.docker.internal" in url
-        or "://localhost" in url
-        or "://127.0.0.1" in url
-        or url.startswith("http://")
-        or url.startswith("ws://")
-    )
-    if not suspicious:
+    if not url or not _unreachable_by_a_browser(url):
         return []
     return [
         checks.Warning(
@@ -514,9 +517,73 @@ def check_call_client_url_is_reachable_by_a_browser(app_configs, **kwargs):
             "valid token, name a real room, and never connect.",
             hint=(
                 "Set LIVEKIT_CLIENT_URL to the public signalling address "
-                "(e.g. wss://example.com/rtc) and leave LIVEKIT_URL as the "
-                "address this service reaches the media server on."
+                "(e.g. wss://example.com/rtc), a path like '/rtc' meaning "
+                "each request's own host, or a {host: url} mapping with a "
+                "'default'. Leave LIVEKIT_URL as the address this service "
+                "reaches the media server on."
             ),
             id="stapel_video.W007",
         )
     ]
+
+
+def _unreachable_by_a_browser(url: str) -> bool:
+    """An address only this process can dial — the W007 shape."""
+    url = (url or "").strip()
+    return bool(url) and (
+        "host.docker.internal" in url
+        or "://localhost" in url
+        or "://127.0.0.1" in url
+        or url.startswith("http://")
+        or url.startswith("ws://")
+    )
+
+
+def _check_client_url_mapping(mapping: dict, default_key: str):
+    """W007 for the per-host form: the hosts it forgets and the addresses it
+    cannot reach.
+
+    A mapping is the form a two-brand fleet reaches for, and its two failure
+    modes are both silent on the server: a host nobody listed is answered
+    nothing at all, and a value copied from ``LIVEKIT_URL`` is answered an
+    address no browser can open. Both produce a call that mints, rings, and
+    never connects.
+    """
+    problems = []
+    if default_key not in mapping:
+        problems.append(
+            checks.Warning(
+                "STAPEL_VIDEO['LIVEKIT_CLIENT_URL'] is a per-host mapping "
+                f"with no {default_key!r} entry, so a request from any host "
+                f"but {sorted(str(k) for k in mapping)} is told nothing about "
+                "where to connect — the call mints a valid token, names a "
+                "real room, and never connects.",
+                hint=(
+                    f"Add a {default_key!r} entry (an absolute URL, or '/rtc' "
+                    "meaning the request's own host) so a brand added to the "
+                    "proxy and forgotten here still resolves."
+                ),
+                id="stapel_video.W007",
+            )
+        )
+    unreachable = sorted(
+        str(key)
+        for key, value in mapping.items()
+        if isinstance(value, str) and _unreachable_by_a_browser(value)
+    )
+    if unreachable:
+        problems.append(
+            checks.Warning(
+                "STAPEL_VIDEO['LIVEKIT_CLIENT_URL'] maps "
+                f"{unreachable} to an address a browser cannot open — a "
+                "host.docker.internal / localhost host, or a plain http://. "
+                "That is this process's own upstream, not the browser's.",
+                hint=(
+                    "Each value is the PUBLIC signalling address for that "
+                    "host (e.g. wss://example.com/rtc); LIVEKIT_URL stays "
+                    "the address this service reaches the media server on."
+                ),
+                id="stapel_video.W007",
+            )
+        )
+    return problems

@@ -123,3 +123,64 @@ def test_a_host_without_the_substrate_is_not_scolded():
     with patch("django.apps.apps.is_installed", return_value=False):
         with override_settings(STAPEL_COMM={"SIGNAL_TRANSPORT": "none"}):
             assert checks.check_lobby_stream_is_deliverable(None) == []
+
+
+# ── W007: the address the BROWSER is handed ────────────────────────────────
+
+W007 = "stapel_video.W007"
+_CHECK = checks.check_call_client_url_is_reachable_by_a_browser
+
+
+@override_settings(
+    STAPEL_VIDEO={"LIVEKIT_URL": "http://host.docker.internal:7880"}
+)
+def test_an_unset_client_url_warns_about_the_upstream_it_falls_back_to():
+    assert [m.id for m in _CHECK(None)] == [W007]
+
+
+@override_settings(STAPEL_VIDEO={"LIVEKIT_CLIENT_URL": "wss://primary.example/rtc"})
+def test_an_absolute_client_url_is_silent():
+    assert _CHECK(None) == []
+
+
+@override_settings(STAPEL_VIDEO={"LIVEKIT_CLIENT_URL": "/rtc"})
+def test_a_path_is_silent_because_it_cannot_name_the_wrong_host():
+    """A path resolves against whoever asked, including a brand added later."""
+    assert _CHECK(None) == []
+
+
+@override_settings(
+    STAPEL_VIDEO={
+        "LIVEKIT_CLIENT_URL": {
+            "primary.example": "wss://primary.example/rtc",
+            "default": "/rtc",
+        }
+    }
+)
+def test_a_mapping_with_a_default_is_silent():
+    assert _CHECK(None) == []
+
+
+@override_settings(
+    STAPEL_VIDEO={"LIVEKIT_CLIENT_URL": {"primary.example": "wss://primary.example/rtc"}}
+)
+def test_a_mapping_with_no_default_warns():
+    """The second brand added to the proxy and forgotten here gets "" — a
+    call that mints a valid token, names a real room, and never connects."""
+    msgs = _CHECK(None)
+    assert [m.id for m in msgs] == [W007]
+    assert "default" in msgs[0].msg
+
+
+@override_settings(
+    STAPEL_VIDEO={
+        "LIVEKIT_CLIENT_URL": {
+            "primary.example": "http://host.docker.internal:7880",
+            "default": "wss://primary.example/rtc",
+        }
+    }
+)
+def test_a_mapping_value_a_browser_cannot_open_warns():
+    msgs = _CHECK(None)
+    assert [m.id for m in msgs] == [W007]
+    assert "primary.example" in msgs[0].msg

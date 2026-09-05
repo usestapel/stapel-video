@@ -227,9 +227,36 @@ class LiveKitProvider(VideoProvider):
         where they do not — which is every host-networked deployment. That is
         why it is a fallback with a boot warning (``stapel_video.W007``) and
         not a default nobody is told about.
+
+        This is the request-less answer: an absolute ``LIVEKIT_CLIENT_URL``,
+        or a mapping's ``default``. A configured *path* has no host to hang
+        off and answers ``""`` here — see :meth:`client_url_for`.
         """
+        return self.client_url_for(None)
+
+    def client_url_for(self, request=None) -> str:
+        """``LIVEKIT_CLIENT_URL`` resolved against the request that asked.
+
+        Three forms — an absolute URL, a path meaning "this request's own
+        host", or a ``{host: url}`` mapping with a ``default`` — resolved by
+        :func:`stapel_video.client_url.resolve_client_url`. The reason they
+        exist is a fleet that serves two brands from one image: one global
+        string sends a browser on the secondary brand to the primary brand's
+        socket, across the cookie, CSP and TLS boundary it was scoped to.
+
+        Only an *unset* value falls back to ``LIVEKIT_URL``. A configured
+        value that does not resolve for this host answers ``""`` instead:
+        this process's own upstream is precisely the address a browser
+        cannot use, and quietly substituting it is what W007 exists to warn
+        about.
+        """
+        from ..client_url import resolve_client_url
+
         conf = self._conf()
-        return conf.LIVEKIT_CLIENT_URL or conf.LIVEKIT_URL or ""
+        configured = conf.LIVEKIT_CLIENT_URL
+        if not configured:
+            return conf.LIVEKIT_URL or ""
+        return resolve_client_url(configured, request)
 
     def _room_create_headers(self, provider_room_ref: str) -> dict:
         """Auth for ``CreateRoom``, which is gated on ``room_create``.

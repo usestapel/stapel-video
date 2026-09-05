@@ -4,6 +4,50 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.2] — 2026-09-06
+
+### Fixed — the browser is told its OWN brand's socket
+
+`LIVEKIT_CLIENT_URL` was one global string, so a fleet serving two brand hosts
+from one image handed every browser the primary brand's address and a page on
+the secondary brand opened a socket across the cookie, CSP and TLS boundary it
+was scoped to — a call that minted a valid token, named a real room, and never
+connected. The value is now resolved per REQUEST in three forms — an absolute
+URL (what every deployment has today), a path like `/rtc` meaning the
+requesting host with `wss`/`ws` by request security, or a `{host: url}` mapping
+with a `default` — and the `url` field of `POST /calls`, `POST
+/calls/{id}/accept` and `POST /calls/{id}/token` answers with the request in
+hand.
+
+The seam is the new `VideoProvider.client_url_for(request)`, whose default
+delegates to `client_url()`, so an out-of-tree provider written against 0.11.0
+keeps working and keeps answering one address. `stapel_video.W007` now also
+warns about a mapping with no `default` (an unlisted host is answered `""` —
+silence, never another brand's address) and about a mapped value no browser can
+open.
+
+### Fixed — a callee this service has not met yet is a question, not a refusal
+
+The first call to a seconds-old account answered `400 invalid_callee` and a
+retry succeeded: this service holds a shadow `users` table whose rows arrive
+with the owner's asynchronous `user.created` projection, and the callee's had
+not landed when the caller dialled — a race reported as a bad request (the Д320
+class, a service refusing a person its neighbour already knows). A callee id
+with no local row is now looked up at the issuer through the comm Function
+named by the new `CALL_USER_LOOKUP_FUNCTION` and mirrored on first contact;
+only an id the issuer does not know either is refused.
+
+The mirror writes through `stapel_core.django.jwt.utils.get_or_create_user_from_jwt`
+— the same function the JWT middleware and `stapel_auth.projection` write shadow
+rows with — so a mirrored callee passes the same deletion-tombstone and
+deactivation gates an authenticated caller does, a service in authoritative mode
+(`JWT_CREATE_USERS_FROM_TOKEN=False`) mirrors nothing, and every uncertainty (no
+name, no route, an exception, an answer with no id) still refuses. No service
+publishes `auth.user_projection` yet, so until one does the default degrades to
+exactly the pre-0.11.2 refusal.
+
+No schema change, no migration, no new dependency floor.
+
 ## [0.11.1] — 2026-09-06
 
 ### Changed — the ring push asks whether the phone is already in the hand

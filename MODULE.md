@@ -238,6 +238,64 @@ stranger reaching a phone; this one pushes on uncertainty because a suppressed
 push is a call nobody hears. `call.missed` is never gated — by then the ring
 has timed out, which disproves "watching" on its own.
 
+### 4e. First contact — `CALL_USER_LOOKUP_FUNCTION` (comm Function name)
+
+This service holds a *shadow* `users` table. Rows arrive two ways: the JWT
+middleware materialises whoever is holding the token, and the identity owner's
+`user.created` projection materialises everybody else — asynchronously. The
+callee of a call is named by a bare id, so a call placed in the seconds before
+that projection lands found no row and answered `400 invalid_callee`. A retry
+worked. Measured on the fleet; the Д320 class, where a service refuses a person
+its neighbour already knows.
+
+So a local miss asks this Function before refusing, and mirrors the answer on
+the spot. The claim set is applied with
+`stapel_core.django.jwt.utils.get_or_create_user_from_jwt` — the writer the
+middleware and the projection consumer both use — so a mirrored callee passes
+the same deletion-tombstone and deactivation gates an authenticated caller
+does, and a service in authoritative mode (`JWT_CREATE_USERS_FROM_TOKEN=False`)
+mirrors nothing.
+
+**Fail-CLOSED, like 4b.** No name, no route, an exception, an answer with no
+id: all refuse. The lookup widens who can be rung by nobody; it only stops a
+race being reported as a bad request.
+
+**Upstream ask:** the default name `auth.user_projection` is the shape
+stapel-auth's `user_projection` payload already has (`serialize_user_to_jwt_data`
+verbatim) but no service publishes it as a Function yet. Until one does, this
+seam degrades to exactly the pre-0.11.2 refusal — a deployment points the
+setting at whatever its identity owner exposes.
+
+### 4f. Where the browser dials — `LIVEKIT_CLIENT_URL` (per request)
+
+`LIVEKIT_URL` is where *this process* reaches the media server; the `url` field
+on every call and token response is where the *browser* does. They are
+different addresses on any host-networked deployment, which is what
+`stapel_video.W007` has warned about since 0.11.0.
+
+0.11.2 makes the browser-facing half a per-REQUEST answer, because one global
+string is wrong the moment one image serves two brand hosts: a page on the
+secondary brand was handed the primary brand's socket, across the cookie, CSP
+and TLS boundary it was scoped to — and the call minted a valid token, named a
+real room, and never connected. Three forms
+(`stapel_video.client_url.resolve_client_url`):
+
+| Form | Value | Answer |
+|------|-------|--------|
+| absolute | `"wss://media.example.com"` | the same for every host (what 0.11.0 had) |
+| path | `"/rtc"` | the request's own host, `wss` when the request was secure, `ws` when not |
+| mapping | `{"primary.example": "...", "default": "/rtc"}` | per host, with `default` answering an unlisted one |
+
+A mapping value may itself be a path. An unlisted host with no `default` is
+answered `""` — silence, never another brand's address, which is the defect
+this closes. A mint with no request in hand (a management command) answers the
+absolute form and a mapping's `default`, and `""` for a path: there is no host
+to build one from.
+
+The seam is `VideoProvider.client_url_for(request)`, whose default delegates to
+`client_url()` — an out-of-tree provider written against 0.11.0 keeps working
+and keeps answering one address.
+
 ### 5. Webhook dispatch — `WEBHOOK_HANDLERS` (**merge** registry)
 
 Which provider event runs which handler, in the fleet's standard three-layer
