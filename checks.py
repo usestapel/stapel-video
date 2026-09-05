@@ -416,3 +416,107 @@ def _scheduled(schedule, task_name: str) -> bool:
         for entry in schedule.values()
         if isinstance(entry, dict)
     )
+
+
+@checks.register(checks.Tags.compatibility)
+def check_call_sweep_is_scheduled(app_configs, **kwargs):
+    """W006: nothing expires a ring, and nothing closes a call nobody ended.
+
+    Two failures, one missing beat entry, and a person is waiting on both.
+
+    A ringing call past its deadline already READS as missed
+    (``calls.services._expire_if_overdue``), so this is not about the answer
+    being wrong. It is about the transitions that only a reader triggers:
+    with neither party looking — which is exactly the case where a call goes
+    unanswered — nobody is sent the missed-call push and no line is written
+    into the thread.
+
+    The other half is worse, because it does not heal. An accepted call whose
+    ``participant_left`` was lost stays accepted forever: metered, blocking
+    both parties from calling anybody else, and showing an in-call panel that
+    will not close. Webhook delivery is at-least-once, which is a promise
+    about duplicates and not about losses.
+
+    Only hosts that drive a beat schedule are checked: a host with no
+    ``CELERY_BEAT_SCHEDULE`` runs the management command from its own cron,
+    which this process cannot see and must not second-guess.
+    """
+    from django.conf import settings
+
+    from .tasks import CALL_SWEEP_TASK_NAME
+
+    schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", None)
+    if not schedule:
+        return []
+    if _scheduled(schedule, CALL_SWEEP_TASK_NAME):
+        return []
+    return [
+        checks.Warning(
+            "CELERY_BEAT_SCHEDULE has no entry for "
+            f"{CALL_SWEEP_TASK_NAME}: an unanswered call will never send its "
+            "missed-call notification, and a call whose provider webhook was "
+            "lost will stay open forever — metered, and blocking both parties "
+            "from placing another call.",
+            hint=(
+                "CELERY_BEAT_SCHEDULE = {**get_video_beat_schedule(), ...} "
+                "(stapel_video.tasks), or run the video_sweep_calls "
+                "management command from cron on the "
+                "CALL_SWEEP_INTERVAL_SECONDS cadence."
+            ),
+            id="stapel_video.W006",
+        )
+    ]
+
+
+@checks.register(checks.Tags.compatibility)
+def check_call_client_url_is_reachable_by_a_browser(app_configs, **kwargs):
+    """W007: the address the browser is handed is the one only we can reach.
+
+    ``LIVEKIT_URL`` is where THIS PROCESS posts twirp calls. On a
+    host-networked deployment that is something like
+    ``http://host.docker.internal:7880`` — an address no browser can resolve,
+    and no ``wss://`` either. Until calls existed no endpoint of this module
+    ever told a client where to connect, so the two were never distinguished
+    and one name did both jobs.
+
+    Now ``POST /calls`` answers a ``url`` the browser dials. If
+    ``LIVEKIT_CLIENT_URL`` is unset the client is handed the server's own
+    upstream, which is right when they genuinely are the same address and
+    silently wrong when they are not: the token is valid, the room exists,
+    the call simply never connects and nothing in any log says why.
+
+    Reported only when the fallback would produce an address a browser cannot
+    use — a ``host.docker.internal`` / ``localhost`` host, or a plain
+    ``http://``. A deployment where both are ``wss://example.com/rtc`` is
+    correct and is not nagged.
+    """
+    from .conf import video_settings
+
+    if video_settings.LIVEKIT_CLIENT_URL:
+        return []
+    url = (video_settings.LIVEKIT_URL or "").strip()
+    if not url:
+        return []
+    suspicious = (
+        "host.docker.internal" in url
+        or "://localhost" in url
+        or "://127.0.0.1" in url
+        or url.startswith("http://")
+        or url.startswith("ws://")
+    )
+    if not suspicious:
+        return []
+    return [
+        checks.Warning(
+            "STAPEL_VIDEO['LIVEKIT_CLIENT_URL'] is unset, so POST /calls "
+            f"hands browsers {url!r} — this process's own upstream address. "
+            "If that is not reachable from a browser the call will mint a "
+            "valid token, name a real room, and never connect.",
+            hint=(
+                "Set LIVEKIT_CLIENT_URL to the public signalling address "
+                "(e.g. wss://example.com/rtc) and leave LIVEKIT_URL as the "
+                "address this service reaches the media server on."
+            ),
+            id="stapel_video.W007",
+        )
+    ]

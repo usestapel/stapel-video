@@ -114,6 +114,144 @@ class LiveKitProvider(VideoProvider):
         token = token.with_metadata(json.dumps(metadata))
         return token.to_jwt()
 
+    # ── 1:1 calls ──────────────────────────────────────────────────────
+
+    def ensure_call_room(
+        self,
+        provider_room_ref: str,
+        *,
+        max_participants: int = 2,
+        empty_timeout_seconds: int = 60,
+        metadata: dict | None = None,
+    ) -> str:
+        """``RoomService/CreateRoom`` with the two-seat cap.
+
+        The one place this class provisions a room instead of letting LiveKit
+        materialize it lazily, because lazy creation cannot carry options and
+        the cap is the option that matters: ``max_participants=2`` is what
+        makes a leaked token unable to add a third tile.
+
+        Creating a room that already exists is not an error to LiveKit (it
+        answers with the existing room), so this is safe to call on a retry.
+        """
+        import json
+
+        requests = _require_requests()
+        payload = {
+            "name": provider_room_ref,
+            "max_participants": int(max_participants),
+            "empty_timeout": int(empty_timeout_seconds),
+        }
+        if metadata:
+            payload["metadata"] = json.dumps(metadata)
+        try:
+            resp = requests.post(
+                f"{self._http_url()}/twirp/livekit.RoomService/CreateRoom",
+                json=payload,
+                headers=self._room_create_headers(provider_room_ref),
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise VideoProviderError(f"create room transport error: {exc}") from exc
+        if resp.status_code != 200:
+            raise VideoProviderError(
+                f"create room failed: {resp.status_code} {resp.text[:300]}"
+            )
+        return provider_room_ref
+
+    def mint_call_token(
+        self,
+        provider_room_ref: str,
+        user_id,
+        user_name: str,
+        user_avatar: str = "",
+        client_session_id: str | None = None,
+        scope_key: str | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> str:
+        """A call grant, with every permission stated rather than inherited.
+
+        ``can_publish`` and ``can_subscribe`` are what a call IS.
+        ``can_publish_data=False`` is a product decision made structural: this
+        fleet's messaging is stapel-chat, a call hangs off a chat thread, and
+        a LiveKit data channel would be a second message store — unpersisted,
+        unmoderated, invisible to erasure — living inside the media session. A
+        prose "we don't use data messages" is a convention; a denied grant is
+        a fact the front cannot work around.
+
+        No ``room_admin`` (that grant is for the server's own twirp calls and
+        is never handed to a browser), no ``room_record``, no ``hidden``.
+        """
+        import json
+        import uuid
+
+        api = _require_sdk()
+        conf = self._conf()
+        if client_session_id:
+            identity = f"{user_id}_{client_session_id}"
+        else:
+            identity = f"{user_id}_{uuid.uuid4().hex[:8]}"
+        ttl = ttl_seconds if ttl_seconds else conf.CALL_TOKEN_TTL_SECONDS
+        token = (
+            api.AccessToken(
+                api_key=conf.LIVEKIT_API_KEY,
+                api_secret=conf.LIVEKIT_API_SECRET,
+            )
+            .with_identity(identity)
+            .with_name(user_name)
+            .with_ttl(_timedelta_seconds(ttl))
+            .with_grants(
+                api.VideoGrants(
+                    room_join=True,
+                    room=provider_room_ref,
+                    can_publish=True,
+                    can_subscribe=True,
+                    can_publish_data=False,
+                )
+            )
+        )
+        # Same metadata contract as mint_join_token — always written, so every
+        # client parses one shape, and so the scope_key echo the presence
+        # writer depends on is present on a call connection too.
+        metadata = {"avatar": user_avatar or ""}
+        if scope_key:
+            metadata[METADATA_SCOPE_KEY] = str(scope_key)
+        return token.with_metadata(json.dumps(metadata)).to_jwt()
+
+    def client_url(self) -> str:
+        """``LIVEKIT_CLIENT_URL``, falling back to ``LIVEKIT_URL``.
+
+        The fallback is right for a deployment where the browser and the
+        server reach LiveKit at the same address, and silently wrong for one
+        where they do not — which is every host-networked deployment. That is
+        why it is a fallback with a boot warning (``stapel_video.W007``) and
+        not a default nobody is told about.
+        """
+        conf = self._conf()
+        return conf.LIVEKIT_CLIENT_URL or conf.LIVEKIT_URL or ""
+
+    def _room_create_headers(self, provider_room_ref: str) -> dict:
+        """Auth for ``CreateRoom``, which is gated on ``room_create``.
+
+        Separate from :meth:`_room_admin_headers` because the grants are
+        different: ``room_admin`` addresses an existing room, ``room_create``
+        makes one. Asking for both everywhere would hand every twirp call the
+        power to create rooms it has no business creating.
+        """
+        api = _require_sdk()
+        conf = self._conf()
+        token = api.AccessToken(
+            api_key=conf.LIVEKIT_API_KEY,
+            api_secret=conf.LIVEKIT_API_SECRET,
+        ).with_grants(
+            api.VideoGrants(room_create=True, room=provider_room_ref)
+        )
+        return {
+            "Authorization": f"Bearer {token.to_jwt()}",
+            "Content-Type": "application/json",
+        }
+
     def rename_participant(
         self, provider_room_ref: str, user_id, user_name: str
     ) -> int:

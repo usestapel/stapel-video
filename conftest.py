@@ -86,5 +86,11 @@ def _clean_provider_state():
     from stapel_video.tests.fakeprovider import FakeProvider
 
     FakeProvider.live = {}
+    FakeProvider.call_mints = []
+    FakeProvider.call_rooms = []
+    FakeProvider.mints = []
+    FakeProvider.client_url_value = "wss://fake.example/rtc"
     yield
     FakeProvider.live = {}
+    FakeProvider.call_mints = []
+    FakeProvider.call_rooms = []

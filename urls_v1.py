@@ -9,6 +9,15 @@ from typing import NamedTuple
 
 from django.urls import path
 
+from .calls.views import (
+    ActiveCallView,
+    CallAcceptView,
+    CallDeclineView,
+    CallDetailView,
+    CallHangupView,
+    CallListCreateView,
+    CallTokenView,
+)
 from .views import (
     LobbyAdmitView,
     LobbyDenyView,
@@ -55,6 +64,34 @@ urlpatterns = [
         "scopes/<str:scope_key>/usage/",
         ScopeUsageView.as_view(),
         name="video-scope-usage",
+    ),
+    # ── 1:1 calls ────────────────────────────────────────────────────
+    # `calls/active` sits BEFORE `calls/<call_id>` on purpose: "active" is a
+    # reserved name in this space, not an id, and a router that matched it as
+    # one would answer 404 for the single read the front makes on every
+    # reconnect.
+    path("calls", CallListCreateView.as_view(), name="video-calls"),
+    path("calls/active", ActiveCallView.as_view(), name="video-call-active"),
+    path("calls/<uuid:call_id>", CallDetailView.as_view(), name="video-call-detail"),
+    path(
+        "calls/<uuid:call_id>/accept",
+        CallAcceptView.as_view(),
+        name="video-call-accept",
+    ),
+    path(
+        "calls/<uuid:call_id>/decline",
+        CallDeclineView.as_view(),
+        name="video-call-decline",
+    ),
+    path(
+        "calls/<uuid:call_id>/hangup",
+        CallHangupView.as_view(),
+        name="video-call-hangup",
+    ),
+    path(
+        "calls/<uuid:call_id>/token",
+        CallTokenView.as_view(),
+        name="video-call-token",
     ),
     path("webhook", WebhookIngressView.as_view(), name="video-webhook"),
 ]

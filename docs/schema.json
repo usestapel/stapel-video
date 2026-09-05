@@ -5,6 +5,301 @@
     "version": "0.0.0"
   },
   "paths": {
+    "/video/api/v1/calls": {
+      "post": {
+        "operationId": "video_api_v1_calls_create",
+        "description": "``POST /video/api/v1/calls`` — ring somebody.\n\nAnswers the CALLER's token. The callee's is minted by ``accept`` and\nnever travels on the ring frame.\n\n**Permissions:** `IsAuthenticated`",
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CallCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CallCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallTokenResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/{call_id}": {
+      "get": {
+        "operationId": "video_api_v1_calls_retrieve",
+        "description": "``GET /video/api/v1/calls/{id}`` — one call, for its two parties.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/{call_id}/accept": {
+      "post": {
+        "operationId": "video_api_v1_calls_accept_create",
+        "description": "``POST /calls/{id}/accept`` — the callee picks up, and gets a token.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallTokenResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/{call_id}/decline": {
+      "post": {
+        "operationId": "video_api_v1_calls_decline_create",
+        "description": "``POST /calls/{id}/decline`` — the callee says no.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/{call_id}/hangup": {
+      "post": {
+        "operationId": "video_api_v1_calls_hangup_create",
+        "description": "``POST /calls/{id}/hangup`` — either party ends it.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/{call_id}/token": {
+      "post": {
+        "operationId": "video_api_v1_calls_token_create",
+        "description": "``POST /calls/{id}/token`` — a fresh credential for a call in progress.\n\nA media token is presented AGAIN on every full reconnect and nothing\nre-mints it automatically, so without this endpoint the token's TTL is a\nhard ceiling on coming back from a tunnel — and the failure looks like a\nnetwork fault rather than an expiry. Live calls only: re-minting a grant\nfor a call that is over would hand out a key to a room nobody is in.\n\n**Permissions:** `IsAuthenticated`",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "tags": [
+          "Video"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CallSessionRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaTokenResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/video/api/v1/calls/active": {
+      "get": {
+        "operationId": "video_api_v1_calls_active_retrieve",
+        "description": "``GET /video/api/v1/calls/active`` — the caller's own live call, if any.\n\nThe repair for every dropped frame: the socket is best-effort, so a lost\n``call.incoming`` would be a call that never rang and a lost\n``call.ended`` a ring that never stops. The front reads this on mount and\non every realtime reconnect (SPEC §7.1), which is what turns \"the socket\nis unreliable\" from a defect into a property.\n\n**Permissions:** `IsAuthenticated`",
+        "tags": [
+          "Video"
+        ],
+        "security": [
+          {
+            "JWTCookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveCallResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/video/api/v1/rooms": {
       "post": {
         "operationId": "video_api_v1_rooms_create",
@@ -393,6 +688,21 @@
   },
   "components": {
     "schemas": {
+      "ActiveCallResponse": {
+        "type": "object",
+        "description": "This person's live call, or the absence of one.",
+        "properties": {
+          "call": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CallResponse"
+              }
+            ],
+            "nullable": true,
+            "description": "The live call, or null. Present-and-null rather than a 204, so"
+          }
+        }
+      },
       "AdmitResponse": {
         "type": "object",
         "description": "The outcome of a host admit action.",
@@ -413,6 +723,142 @@
         "required": [
           "participant",
           "token"
+        ]
+      },
+      "CallCreateRequest": {
+        "type": "object",
+        "description": "Ring somebody.",
+        "properties": {
+          "callee_id": {
+            "type": "string",
+            "description": "The person to ring"
+          },
+          "thread_key": {
+            "type": "string",
+            "description": "The chat conversation this call belongs to. The default"
+          },
+          "media": {
+            "type": "string",
+            "description": "audio / video. Defaults to video"
+          },
+          "client_session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "A stable per-browser id, exactly as on"
+          }
+        },
+        "required": [
+          "callee_id"
+        ]
+      },
+      "CallResponse": {
+        "type": "object",
+        "description": "One call, as both parties see it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Call id (UUID)"
+          },
+          "thread_key": {
+            "type": "string",
+            "description": "The chat conversation this call hangs off, echoed back"
+          },
+          "caller_id": {
+            "type": "string",
+            "description": "Who rang"
+          },
+          "callee_id": {
+            "type": "string",
+            "description": "Who was rung"
+          },
+          "room_name": {
+            "type": "string",
+            "description": "The provider room ref (``call-<id>``) — the name the"
+          },
+          "media": {
+            "type": "string",
+            "description": "audio / video — what the caller asked for"
+          },
+          "state": {
+            "type": "string",
+            "description": "ringing / accepted / declined / missed / ended / failed"
+          },
+          "end_reason": {
+            "type": "string",
+            "description": "Why it stopped, \"\" while it has not"
+          },
+          "started_at": {
+            "type": "string",
+            "description": "When the ring began (ISO-8601)"
+          },
+          "answered_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "When it was accepted, or null"
+          },
+          "ended_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "When it stopped, or null"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "description": "Connected seconds — ``ended_at - answered_at``"
+          },
+          "expires_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "When the ring runs out, while it is ringing; null"
+          }
+        },
+        "required": [
+          "callee_id",
+          "caller_id",
+          "end_reason",
+          "id",
+          "media",
+          "room_name",
+          "started_at",
+          "state",
+          "thread_key"
+        ]
+      },
+      "CallSessionRequest": {
+        "type": "object",
+        "description": "Accept a call, or re-mint its token.",
+        "properties": {
+          "client_session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "See ``CallCreateRequest``"
+          }
+        }
+      },
+      "CallTokenResponse": {
+        "type": "object",
+        "description": "A call plus the credential and address one party dials with.",
+        "properties": {
+          "call": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CallResponse"
+              }
+            ],
+            "description": "The call"
+          },
+          "token": {
+            "type": "string",
+            "description": "This party's signed media token. Never anybody else's, and"
+          },
+          "url": {
+            "type": "string",
+            "description": "The media server the token is for — where the BROWSER connects,"
+          }
+        },
+        "required": [
+          "call",
+          "token",
+          "url"
         ]
       },
       "JoinRequest": {
@@ -473,6 +919,24 @@
         },
         "required": [
           "participant_id"
+        ]
+      },
+      "MediaTokenResponse": {
+        "type": "object",
+        "description": "A re-minted credential for a call already in progress.",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "A fresh signed media token for the caller of this request"
+          },
+          "url": {
+            "type": "string",
+            "description": "Where the browser connects"
+          }
+        },
+        "required": [
+          "token",
+          "url"
         ]
       },
       "ParticipantListResponse": {

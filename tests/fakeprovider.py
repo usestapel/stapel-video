@@ -74,6 +74,14 @@ class FakeProvider(VideoProvider):
     mints: list = []
     #: Every ``remove_participant`` call, as (room_ref, user_id).
     removals: list = []
+    #: Every ``mint_call_token`` call, as (room_ref, user_id, name, avatar,
+    #: client_session_id, scope_key, ttl_seconds).
+    call_mints: list = []
+    #: Every ``ensure_call_room`` call, as (room_ref, max_participants,
+    #: empty_timeout_seconds).
+    call_rooms: list = []
+    #: What ``client_url`` answers.
+    client_url_value: str = "wss://fake.example/rtc"
     #: room_ref -> metadata dict, for the metadata pair.
     metadata: dict = {}
     #: room_ref -> list of raw participant dicts the media server would
@@ -101,6 +109,42 @@ class FakeProvider(VideoProvider):
             f"{user_id}_{client_session_id}" if client_session_id else f"{user_id}_rnd"
         )
         return f"faketoken::{provider_room_ref}::{identity}"
+
+    def ensure_call_room(
+        self,
+        provider_room_ref,
+        *,
+        max_participants: int = 2,
+        empty_timeout_seconds: int = 60,
+        metadata=None,
+    ) -> str:
+        FakeProvider.call_rooms.append(
+            (provider_room_ref, max_participants, empty_timeout_seconds)
+        )
+        return provider_room_ref
+
+    def mint_call_token(
+        self,
+        provider_room_ref,
+        user_id,
+        user_name,
+        user_avatar: str = "",
+        client_session_id=None,
+        scope_key=None,
+        *,
+        ttl_seconds=None,
+    ) -> str:
+        FakeProvider.call_mints.append(
+            (provider_room_ref, str(user_id), user_name, user_avatar,
+             client_session_id, scope_key, ttl_seconds)
+        )
+        identity = (
+            f"{user_id}_{client_session_id}" if client_session_id else f"{user_id}_rnd"
+        )
+        return f"fakecalltoken::{provider_room_ref}::{identity}"
+
+    def client_url(self) -> str:
+        return FakeProvider.client_url_value
 
     def rename_participant(self, provider_room_ref, user_id, user_name) -> int:
         FakeProvider.renames.append((provider_room_ref, str(user_id), user_name))

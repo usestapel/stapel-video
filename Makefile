@@ -15,7 +15,18 @@ PYTHON ?= python3
 # Emit the contract triad + capabilities.json + llms.txt (the fifth contract
 # artifact, stapel_tools.llms_txt) into docs/.
 #
-# --budget 6000: raised from 5000 in 0.7.0 (itself raised from the 4000
+# --budget 8500: raised from 6000 in 0.11.0, when 1:1 calls added a second
+# lifecycle to the module — nine surface entries (the six transitions, the two
+# reads, the token re-mint), three call frames' worth of stream helpers, four
+# config axes and six error keys. The raise is deliberate and it is the SAME
+# argument as every previous one: the surface section is what an agent reads
+# to avoid rewriting a mechanism that already exists, and "a media token is
+# presented again on every full reconnect, so the TTL is a ceiling on
+# reconnecting rather than on the credential" does not survive being
+# compressed to a clause — it is the whole reason the re-mint endpoint is
+# there. Trimming it to fit would buy a smaller file and a reimplementation.
+#
+# --budget 8500 was itself raised from 5000 in 0.7.0 (itself raised from the 4000
 # default in 0.6.0, when the presence meter added 14 surface entries to the 11
 # the room lifecycle already had). 0.7.0 adds the scope dimension — six more
 # surface entries (the two rollups, the two month helpers, the scope-key
@@ -35,7 +46,7 @@ PYTHON ?= python3
 contract:
 	$(PYTHON) -m stapel_video._codegen --out docs
 	$(PYTHON) -m stapel_video._capabilities --out docs
-	$(PYTHON) -m stapel_tools.llms_txt . --out docs --budget 6000
+	$(PYTHON) -m stapel_tools.llms_txt . --out docs --budget 8500
 	$(PYTHON) -m stapel_tools.readme .
 
 # Drift gate: regenerate into a temp dir and diff against the committed docs/*.json.
@@ -43,7 +54,7 @@ contract-check:
 	@tmp=$$(mktemp -d); \
 	$(PYTHON) -m stapel_video._codegen --out "$$tmp" || { rm -rf "$$tmp"; exit 1; }; \
 	$(PYTHON) -m stapel_video._capabilities --out "$$tmp" || { rm -rf "$$tmp"; exit 1; }; \
-	$(PYTHON) -m stapel_tools.llms_txt . --out "$$tmp" --budget 6000 || { rm -rf "$$tmp"; exit 1; }; \
+	$(PYTHON) -m stapel_tools.llms_txt . --out "$$tmp" --budget 8500 || { rm -rf "$$tmp"; exit 1; }; \
 	rc=0; \
 	for f in schema.json flows.json errors.json capabilities.json llms.txt; do \
 		if ! diff -q "docs/$$f" "$$tmp/$$f" >/dev/null 2>&1; then \

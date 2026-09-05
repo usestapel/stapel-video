@@ -178,6 +178,14 @@
     "owner": "stapel_core"
   },
   {
+    "code": "error.400.video_call_invalid_callee",
+    "status": 400,
+    "params": [],
+    "remediation": "fix_input",
+    "en": "callee_id must name another user",
+    "owner": "stapel_video"
+  },
+  {
     "code": "error.400.video_invalid_access_level",
     "status": 400,
     "params": [],
@@ -250,6 +258,14 @@
     "owner": "stapel_core"
   },
   {
+    "code": "error.403.video_call_not_allowed",
+    "status": 403,
+    "params": [],
+    "remediation": "retry",
+    "en": "You may not call this person",
+    "owner": "stapel_video"
+  },
+  {
     "code": "error.403.video_join_denied",
     "status": 403,
     "params": [],
@@ -296,6 +312,14 @@
     "remediation": "verify",
     "en": "Verification challenge not found or expired",
     "owner": "stapel_core"
+  },
+  {
+    "code": "error.404.video_call_not_found",
+    "status": 404,
+    "params": [],
+    "remediation": "retry",
+    "en": "Call not found",
+    "owner": "stapel_video"
   },
   {
     "code": "error.404.video_participant_not_found",
@@ -352,6 +376,22 @@
     "remediation": "fix_input",
     "en": "Resource already exists",
     "owner": "stapel_core"
+  },
+  {
+    "code": "error.409.video_call_busy",
+    "status": 409,
+    "params": [],
+    "remediation": "fix_input",
+    "en": "You are already on a call",
+    "owner": "stapel_video"
+  },
+  {
+    "code": "error.409.video_call_state",
+    "status": 409,
+    "params": [],
+    "remediation": "fix_input",
+    "en": "This call is no longer in a state that allows this",
+    "owner": "stapel_video"
   },
   {
     "code": "error.410.gone",
@@ -434,5 +474,13 @@
     "remediation": "retry",
     "en": "Cannot verify workspace mandate right now",
     "owner": "stapel_core"
+  },
+  {
+    "code": "error.503.video_call_provider_unavailable",
+    "status": 503,
+    "params": [],
+    "remediation": "retry",
+    "en": "The video backend is unavailable right now",
+    "owner": "stapel_video"
   }
 ]

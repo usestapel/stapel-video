@@ -10,9 +10,10 @@ Every key is read through `video_settings` (`stapel_video.conf.AppSettings`,
 namespace `STAPEL_VIDEO`). Resolution order per key: `settings.STAPEL_VIDEO`
 dict → a flat Django setting of the same name → environment variable → the
 default below. `VIDEO_PROVIDER`, `DEFAULT_ACCESS_LEVEL` and
-`DEFAULT_ADMIT_REQUIRED` are CTO-facing config axes (capability-config.md §16);
-the `LIVEKIT_*` / `EGRESS_*` credentials are tuning knobs for the default
-provider.
+`DEFAULT_ADMIT_REQUIRED` — and, since 0.11.0, `CALL_RING_TIMEOUT_SECONDS`,
+`CALL_MAX_DURATION_SECONDS`, `CALL_NOTIFY_ON_RING` and `CALL_AUTHORIZER` — are
+CTO-facing config axes (capability-config.md §16); the `LIVEKIT_*` / `EGRESS_*`
+credentials are tuning knobs for the default provider.
 
 ## stapel-video
 
@@ -23,7 +24,8 @@ provider.
 | LIVE_ROOMS_PROVIDER | env | dotted path to a LiveRoomsProvider — "which calls is this user in right now" for the profile.changed rename. Default reads this module's own tables; a host running its own rooms MUST point this at its adapter (system check stapel_video.E008 refuses to boot otherwise). | no | stapel_video.live_rooms.DefaultLiveRoomsProvider |
 | DEFAULT_ACCESS_LEVEL | env | axis: default room access — public \| scope_trusted \| restricted. | no | restricted |
 | DEFAULT_ADMIT_REQUIRED | env | axis: whether a fresh room starts with the lobby on. | no | true |
-| LIVEKIT_URL | env | LiveKit server URL (default provider). | no | (empty) |
+| LIVEKIT_URL | env | LiveKit server URL **this process** reaches the media server on (twirp admin calls). On a host-networked deployment this is not an address a browser can resolve — see LIVEKIT_CLIENT_URL. | no | (empty) |
+| LIVEKIT_CLIENT_URL | env | LiveKit signalling URL handed to the **browser** by `POST /calls` (e.g. `wss://example.com/rtc`). Empty falls back to LIVEKIT_URL, which is correct only where both reach the same address; `stapel_video.W007` warns when the fallback would hand out an unreachable one. | no | (empty) |
 | LIVEKIT_API_KEY | vault | LiveKit API key (default provider). | no | (empty) |
 | LIVEKIT_API_SECRET | vault | LiveKit API secret (default provider). | no | (empty) |
 | JOIN_TOKEN_TTL_SECONDS | env | join-token time-to-live (seconds). | no | 3600 |
@@ -31,7 +33,17 @@ provider.
 | EGRESS_S3_BUCKET | env | recording-egress bucket. | no | (empty) |
 | EGRESS_S3_ACCESS_KEY | vault | recording-egress access key. | no | (empty) |
 | EGRESS_S3_SECRET_KEY | vault | recording-egress secret key. | no | (empty) |
-| WEBHOOK_HANDLERS | env | merge registry over `webhooks.BUILTIN_WEBHOOK_HANDLERS`: `{provider event type: dotted path \| None to remove}`. Never read from the environment — a stray string would be iterated as characters. | no | {} (builtins: egress_ended, egress_updated, participant_joined, participant_left) |
+| CALL_RING_TIMEOUT_SECONDS | env | axis: how long a 1:1 call rings before it becomes a missed call. Visible to both parties — the caller's screen counts down against this exact deadline (`expires_at`). | no | 45 |
+| CALL_TOKEN_TTL_SECONDS | env | TTL of a call's media token. A ceiling on RECONNECTING, not on the credential: the token is presented again on every full reconnect and nothing re-mints it, so a short value produces calls that connect, run and cannot come back from a tunnel. `POST /calls/{id}/token` re-mints. | no | 3600 |
+| CALL_SWEEP_INTERVAL_SECONDS | env | cadence of the call reconciler (`video-call-sweep` / `video_sweep_calls`). Bounds how long a caller stares at a ring that is already over. | no | 10 |
+| CALL_MAX_DURATION_SECONDS | env | axis: hard stop on an accepted call, for the one nobody hangs up. The media server's idle timeout never fires for it — the room is not empty. | no | 7200 |
+| CALL_CONNECT_GRACE_SECONDS | env | how long after `accept` the reconciler leaves a call alone. Too low and calls hang up by themselves (the room is still empty while both browsers dial); too high and a genuinely dead call is metered for that long. | no | 30 |
+| CALL_ROOM_EMPTY_TIMEOUT_SECONDS | env | `empty_timeout` the provider is given for a call room. | no | 60 |
+| CALL_AUTHORIZER | env | axis + seam: dotted path to `(request, *, caller, callee_id, thread_key) -> bool` — who may make whose phone ring. Default requires both parties to be participants of the call's thread; fail-closed on every uncertainty. A user id is not a phone number. | no | stapel_video.calls.authorize.thread_participants |
+| CALL_PARTICIPANTS_FUNCTION | env | comm Function NAME the default authorizer asks for conversation membership. Empty makes the default authorizer refuse every call rather than allow them. | no | chat.conversation_participants |
+| CALL_THREAD_MESSAGE_FUNCTION | env | comm Function NAME a finished call writes its system line through (`video.call.ended:<seconds>` / `.missed` / `.declined`). Empty turns the line off. | no | chat.post_system_message |
+| CALL_NOTIFY_ON_RING | env | axis: whether a ring also requests a push notification (`call.incoming`). A missed call is notified either way. Not gated on the callee being offline — nothing in the fleet answers that. | no | true |
+| WEBHOOK_HANDLERS | env | merge registry over `webhooks.BUILTIN_WEBHOOK_HANDLERS`: `{provider event type: dotted path \| None to remove}`. Never read from the environment — a stray string would be iterated as characters. | no | {} (builtins: egress_ended, egress_updated, participant_joined, participant_left, room_finished) |
 | PRESENCE_SWEEP_INTERVAL_SECONDS | env | how often the reconciler compares open presence spans against the media server's roster. Also the worst-case over-count of a lost `participant_left`. | no | 60 |
 | PRESENCE_SPAN_RETENTION_DAYS | env | age at which `video_purge_spans` deletes a ParticipantSpan. `None` = keep forever (stated, not drifted into). | no | 400 |
 | PRESENCE_PURGE_SCHEDULE | env | crontab kwargs for the retention purge in `get_video_beat_schedule()`. Never read from the environment (a string is not a schedule). | no | {"hour": 4, "minute": 10} |

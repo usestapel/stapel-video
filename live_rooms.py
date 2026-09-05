@@ -22,6 +22,8 @@ subscriber earns a second method when that subscriber exists, not before.
 """
 from __future__ import annotations
 
+from django.db import models
+
 
 class LiveRoomsProvider:
     """Contract for "which live rooms is this user in". Subclass and point
@@ -51,9 +53,10 @@ class DefaultLiveRoomsProvider(LiveRoomsProvider):
     nobody else — see ``checks.check_live_rooms_source_is_writable``."""
 
     def live_rooms_for_user(self, user_id) -> list:
+        from .calls.models import LIVE_STATES, Call
         from .models import ParticipantStatus, Room
 
-        return list(
+        rooms = list(
             Room.objects.filter(
                 participants__user_id=user_id,
                 participants__status=ParticipantStatus.ADMITTED,
@@ -63,6 +66,20 @@ class DefaultLiveRoomsProvider(LiveRoomsProvider):
             .values_list("provider_room_ref", flat=True)
             .distinct()
         )
+        # 1:1 calls too (0.11.0). A Call writes no Room row — it hands
+        # `call-<id>` straight to the provider — so reading only the Room
+        # table would answer an empty list for somebody who is on a call
+        # right now, and the profile.changed rename would reach every
+        # conference tile and no call tile. Exactly the silent, symptomless
+        # wrongness this seam exists to prevent, arriving through the
+        # DEFAULT implementation instead of a host's.
+        rooms.extend(
+            Call.objects.filter(state__in=LIVE_STATES)
+            .filter(models.Q(caller_id=user_id) | models.Q(callee_id=user_id))
+            .exclude(room_name="")
+            .values_list("room_name", flat=True)
+        )
+        return list(dict.fromkeys(rooms))
 
 
 def get_live_rooms_provider() -> LiveRoomsProvider:

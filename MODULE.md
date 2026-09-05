@@ -52,12 +52,40 @@
   workspace talked how much, per month" a question this library answers,
   instead of a join a host writes beside the meter with its own copy of the
   union arithmetic.
+- **1:1 calls (0.11.0) — `Call`, a second lifecycle in the same module.** One
+  person rings one other person: `Call {thread_key, caller, callee, room_name,
+  scope_key, media, state, end_reason, started_at, answered_at, ended_at}`,
+  with `ringing → accepted → ended` and the terminal `declined` / `missed` /
+  `failed`. **It writes no `Room` row**, deliberately: a `Room` is entered with
+  a join code — a shareable secret that admits its holder — and policed by a
+  lobby, and a call has neither a third seat nor anything to share. The
+  provider room is `call-<id>`, capped at two by the media server
+  (`ensure_call_room`) as well as by an explicit grant (`mint_call_token`).
+  Duration is derived (`ended_at - answered_at`), never stored: a call has
+  several independent witnesses of its end and none of them may restate it.
+  Metering comes free — `call-<id>` is an ordinary `room_key`, so every
+  existing rollup covers calls with no new code.
+- **Ringing (0.11.0) — `video:user:<user_id>`.** A second ephemeral Signal
+  stream, this one addressed to a PERSON rather than a room, carrying
+  `call.incoming` / `call.accepted` / `call.declined` / `call.ended`. Mounted
+  at `ws/video/inbox` with **no id in the path**: the key is built from the
+  authenticated scope, so the consumer cannot name somebody else's ring and
+  there is no comparison for a future edit to drop. No credential ever rides
+  these frames — the callee's token comes back from `POST /calls/{id}/accept`.
+  A push (`call.incoming` / `call.missed`, through
+  `stapel_core.notifications.request_notification`) is the other half: the
+  socket reaches a browser that is open, a push reaches a phone in a pocket.
 - **API** — room create/info/join, participants (anchor-paginated), lobby
-  admit/deny (host-only), one tenant's per-month usage
+  admit/deny (host-only), the call surface (`POST /calls`, `GET
+  /calls/active`, `GET /calls/{id}`, `accept` / `decline` / `hangup` /
+  `token`), one tenant's per-month usage
   (`GET /video/api/v1/scopes/{scope_key}/usage/`, mandate-gated in that very
   scope), and a signed provider webhook ingress. DTO/serializer seams +
   OpenAPI (drf-spectacular).
-- **comm surface** — emits `video.egress_ended`, `video.participant.joined`
+- **comm surface** — calls `chat.conversation_participants` (call gate) and
+  `chat.post_system_message` (thread line) BY NAME through configurable seams,
+  and `stapel_core.notifications.request_notification` for the ring/missed
+  push; emits `video.egress_ended`, `video.participant.joined`
   and `video.participant.left`; provides `video.presence.aggregate`,
   `video.presence.spans_export`, `video.presence.pairs_export`,
   `video.presence.usage_rollup` and `video.presence.usage_rollup_by_month`;
@@ -153,6 +181,42 @@ When a room recording finishes, the webhook path emits `video.egress_ended`
 (`{egress_id, status, storage_key}`); stapel-recordings (or any subscriber)
 finalizes the upload the egress wrote. **This module creates no recording
 resource itself.** Schema: `schemas/emits/video.egress_ended.json`.
+
+### 4b. Who may ring whom — `CALL_AUTHORIZER` (dotted path, replace)
+
+`(request, *, caller, callee_id, thread_key) -> bool`. The default,
+`stapel_video.calls.authorize.thread_participants`, requires both parties to
+be participants of the conversation the call hangs off, read through the comm
+Function named by `CALL_PARTICIPANTS_FUNCTION` (`chat.conversation_participants`
+by default — a NAME, never an import).
+
+**Why it is not optional.** A user id is not a phone number. Without this rule
+the id on a public listing page is a ringer, and the first thing that happens
+is somebody scripting it. So the seam is **fail-closed** in the substrate's
+sense (`stapel_realtime.authorize.deny`): an empty `thread_key`, an
+unregistered function, an unreachable peer and a malformed answer are all
+refusals. That matters most in the failure nobody would notice — a bus outage
+would otherwise turn the gate off for everybody at once, with nothing looking
+wrong.
+
+A deployment with no conversation layer points this at its own callable, or at
+the shipped `stapel_video.calls.authorize.allow_any` — which exists so that
+"anybody may ring anybody" is a line somebody signed rather than a default
+nobody chose.
+
+### 4c. The thread line — `CALL_THREAD_MESSAGE_FUNCTION` (comm Function name)
+
+A finished call writes one system line into its thread through this Function
+(`chat.post_system_message`). The body is a marker with its one argument —
+`video.call.ended:188`, `video.call.missed`, `video.call.declined` — not
+rendered text: a rendered string freezes one language and one duration format
+into a row that outlives both. Empty turns the line off. Failure is logged and
+never raised: by the time it runs the call is over and the `Call` row is the
+truth.
+
+**Known gap:** a chat message has no structured-parameter field, so the
+duration rides in the body string. The marker keeps its meaning if such a
+field ever arrives.
 
 ### 5. Webhook dispatch — `WEBHOOK_HANDLERS` (**merge** registry)
 

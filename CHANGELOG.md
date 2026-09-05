@@ -4,6 +4,186 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] — 2026-09-05
+
+### Added — a call is not a conference with two people in it
+
+A buyer and a seller need to talk. This module could already put two people in
+a room, and doing it that way would have been wrong in a specific way: a
+`Room` is entered with a `join_code` — a shareable secret that admits whoever
+holds it — and policed afterwards by a lobby. A private call has no third
+seat, nothing to share and nobody to admit. Sharing the tables would also have
+meant two state machines answering "is this person in this call", `Call.state`
+and `RoomParticipant.status`, which is one more than can ever be right.
+
+So `stapel_video.calls` is a second lifecycle in the same module, and it
+writes no `Room` row. `Call {thread_key, caller, callee, room_name, scope_key,
+media, state, end_reason, started_at, answered_at, ended_at}` moves
+`ringing → accepted → ended`, with the terminal `declined`, `missed` and
+`failed`. The provider room is `call-<id>`, handed straight to the
+`VideoProvider` seam.
+
+**Duration is derived, never stored.** `ended_at - answered_at`, computed on
+read, and zero for a call nobody answered. A call has several independent
+witnesses of its end — the person who pressed the button, a `participant_left`
+webhook, a `room_finished` webhook, the reconciler — arriving out of order and
+more than once. Every terminal transition is a conditional UPDATE filtered on
+the state it is leaving, so the first witness wins outright and the rest are
+no-ops. The only way to guarantee two of them cannot persist two different
+answers is to have nowhere to put the second one.
+
+**Metering came free**, and that is the whole argument for the module
+boundary: `call-<id>` is an ordinary `room_key`, so `participant_joined` /
+`participant_left` open and close `ParticipantSpan` rows with the `scope_key`
+echoed off the grant, and every existing rollup covers calls with no new code.
+
+### Added — ringing, in two transports, because they answer different questions
+
+`video:user:<user_id>` is a second ephemeral Signal stream, addressed to a
+PERSON rather than to a room, carrying `call.incoming` / `call.accepted` /
+`call.declined` / `call.ended`. It is mounted at `ws/video/inbox` with **no id
+in the path**: the key is built from the authenticated scope, so the consumer
+physically cannot name somebody else's ring. That is the authorization, not a
+check around it — a path parameter would make "is this your inbox?" a
+comparison a future edit can drop. The shape is copied verbatim from
+`ws/notifications/inbox` and `ws/chat/inbox`.
+
+**No credential ever rides these frames.** The lobby stream has to redact a
+media token for every socket its frame does not name; a ring carries none,
+because the callee's grant comes back from `POST /calls/{id}/accept` — an
+authenticated request by the person it belongs to. A rule nobody has to obey
+is a rule nobody can break.
+
+The socket reaches a browser that is open. A phone in a pocket is the case a
+calling feature exists for, so a ring also asks
+`stapel_core.notifications.request_notification` for a `call.incoming` push,
+and a timeout for `call.missed`. The two notification types are the host's to
+register in `STAPEL_NOTIFICATIONS["TYPES"]`.
+
+**Named gap, not worked around:** nothing in the fleet answers "does this user
+have a live realtime session" — stapel-realtime has no presence at all, and
+stapel-chat's counts chat sockets and is module-private. So the ring push is
+NOT gated on the callee being offline; it is sent every time and the client
+suppresses the banner for a call it is already ringing in-app. Gate it when a
+fleet-level liveness Function exists; do not build a fourth private one.
+
+### Added — three provider methods, and why each is separate
+
+All three are optional (`NotImplementedError` default), so an out-of-tree
+provider stays valid. `mint_join_token` is untouched.
+
+- **`ensure_call_room`** — a room the media server caps at two. The grant
+  already names one room, but a grant is a signed string and a signed string
+  can be copied out of a browser; a server that refuses the third connection
+  cannot be talked out of it. This is why it costs a round trip where
+  `create_room` costs none.
+- **`mint_call_token`** — the grant with its permissions written down instead
+  of inherited. `room_join` + `can_publish` + `can_subscribe`, and
+  **`can_publish_data=False`**: messaging in this fleet is stapel-chat, and a
+  LiveKit data channel would be a second message store — unpersisted,
+  unmoderated, invisible to erasure — living inside the media session.
+  Denying it in the grant makes that a property rather than a convention some
+  future front-end code can quietly break.
+- **`client_url`** — where the BROWSER connects, which is not where we
+  connect. `LIVEKIT_URL` is this process's twirp upstream, which on a
+  host-networked deployment is `http://host.docker.internal:7880` — an address
+  no browser can resolve. The two were never distinguished because until now
+  no endpoint of this module ever told a client where to dial.
+  `LIVEKIT_CLIENT_URL` is the new name, and `stapel_video.W007` warns at boot
+  when the fallback would hand out an unreachable one.
+
+### Added — `POST /calls/{id}/token`, and the reason it is not a nicety
+
+A media token is presented **again** on every full reconnect and nothing
+re-mints it automatically. meettoday raised its own join TTL from one hour to
+six for exactly this, with the comment "the TTL is a hard ceiling on
+reconnecting in a long meeting". So a short-lived call token would have
+produced calls that connect, run perfectly, and then cannot come back from a
+tunnel — a failure that reads as a network fault and is an expiry.
+`CALL_TOKEN_TTL_SECONDS` is therefore 3600, and this endpoint lets a client's
+Reconnect re-mint rather than replay. The credential's safety comes from what
+it grants — one room, publish/subscribe, a room capped at two that ends — not
+from a short clock.
+
+### Changed — `participant_left` is now a composite builtin
+
+`BUILTIN_WEBHOOK_HANDLERS["participant_left"]` points at
+`stapel_video.webhooks.handle_participant_left`, which runs the presence write
+and then ends the call. Composed inside the builtin rather than by
+`register_webhook_handler`, deliberately: runtime registration outranks a
+host's `WEBHOOK_HANDLERS` overlay, and a library must not win that argument
+with its own host. A host replacing the entry replaces both behaviours, which
+is the same bargain it always had.
+
+`room_finished` gains a builtin too. It has arrived, passed the signature
+check and been dropped on the floor since 0.6.0; a call needs it, because a
+room the media server closes is a call that is over whether or not anybody's
+`participant_left` survived.
+
+### Changed — `DefaultLiveRoomsProvider` finds calls
+
+It read `Room` rows, and a `Call` writes none — so it would have answered an
+empty list for somebody who is on a call right now, and a `profile.changed`
+rename would have reached every conference tile and no call tile, with nothing
+raised and nothing logged. Exactly the symptomless wrongness that seam exists
+to prevent, arriving through the default implementation.
+
+### Added — the reconciler, and the grace window that keeps it from eating calls
+
+`stapel_video.tasks.sweep_calls` (`video-call-sweep` in the beat schedule,
+`manage.py video_sweep_calls` for cron, `stapel_video.W006` when a host drives
+a schedule without it) does three things: expires rings past their deadline,
+caps calls past `CALL_MAX_DURATION_SECONDS`, and closes accepted calls whose
+room the media server reports as gone or short of two connections.
+
+Correctness of the *answer* does not depend on it — any read of an overdue
+ring transitions it first — so a misconfigured schedule means late thread
+lines and late pushes, not calls that ring forever.
+
+`CALL_CONNECT_GRACE_SECONDS` (30) exists because an accepted call is a promise
+about two browsers that have not dialled yet: the token was handed over
+milliseconds ago and the room is still empty, so a roster read at that instant
+says "fewer than two" about a call that is starting normally. Without the
+window the reconciler kills every call within one interval of it being
+answered — a defect that presents as "calls hang up by themselves", with a
+healthy webhook path and a green everything.
+
+### Added — one live call per user, and an honest account of the race
+
+The gate is a query over both parties inside the create transaction. The two
+partial unique constraints on the model are a **backstop**: they cannot
+express the cross-role case, because being the caller of one call and the
+callee of another violates neither. The residual race — A rings B in the same
+instant somebody rings A — leaves two rings, and `accept` re-runs the check so
+at most one of them is ever answered. Written down here rather than implied,
+so the next reader does not delete the query as redundant with the index.
+
+### Added — the thread line
+
+A finished call writes one system line into its conversation through
+`CALL_THREAD_MESSAGE_FUNCTION` (`chat.post_system_message`), by name and never
+by import. The body is a marker with its one argument —
+`video.call.ended:188`, `video.call.missed`, `video.call.declined` — not
+rendered text: a rendered string freezes one language and one duration format
+into a row that outlives both. `client_msg_id` is the call's own id, so an
+at-least-once redelivery writes one line.
+
+**Named gap:** a chat message has no structured-parameter field, so the
+duration rides in the body string. The marker keeps its meaning if such a
+field arrives.
+
+### Notes
+
+- Six new error keys, and every refusal about a call the caller is not party
+  to is **404** — on `accept`, `decline`, `hangup` and the token re-mint as
+  well as on the read. A call id names two people and the conversation they
+  are having; a 403 would confirm that a guessed id is a real one.
+- Contract: 15 paths (was 8), 7 axes (was 3), 57 error keys. The `llms.txt`
+  budget is raised to 8500 deliberately, with the argument in the Makefile.
+- Migration `0004_call` is pure expand: one new table, nothing touched.
+- Minor, not patch: new models, a new URL block, a new socket route and three
+  new methods on the provider ABC.
+
 ## [0.10.0] — 2026-08-30
 
 ### Fixed — a merge is not a delete: the guest's call, and the meter, follow the survivor

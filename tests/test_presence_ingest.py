@@ -111,7 +111,12 @@ def test_registry_carries_the_builtin_events():
         "egress_ended",
         "egress_updated",
         "participant_joined",
+        # 0.11.0: the builtin is now the composite in webhooks.py — a
+        # departure closes the presence span AND ends a 1:1 call — and
+        # room_finished, dropped on the floor for five releases, is the
+        # independent witness a call needs when a participant_left is lost.
         "participant_left",
+        "room_finished",
     }
 
 

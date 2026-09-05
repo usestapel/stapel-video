@@ -94,6 +94,16 @@
       "name": "USAGE_AUTHORIZER",
       "kind": "dotted_path",
       "summary": "Who may read one partition's usage in a deployment with no workspaces to ask (a callable (request, scope_key) -> bool; staff-only by default). Where workspaces IS present it is not consulted at all — the capability named by USAGE_MANDATE goes to the access registry, so a member of one workspace cannot read another's numbers by typing its id into the URL."
+    },
+    {
+      "name": "CALL_AUTHORIZER",
+      "kind": "dotted_path",
+      "summary": "Swap the rule for who may ring whom. The default reads conversation membership through CALL_PARTICIPANTS_FUNCTION (a comm Function NAME, not an import) and refuses everything it cannot verify; a deployment with no conversation layer points this at its own callable rather than getting an open default."
+    },
+    {
+      "name": "CALL_THREAD_MESSAGE_FUNCTION",
+      "kind": "comm_function",
+      "summary": "The comm Function a finished call writes its system line through («Call · 3:12», «Missed call», «Declined») — `chat.post_system_message` by default, reached by name so this module imports no chat model. Empty turns the line off for a deployment with no conversations."
     }
   ],
   "axes": {
@@ -111,6 +121,26 @@
       "business_label": "Whether new rooms start with a waiting room",
       "summary": "Whether a freshly created room turns the lobby on by default (guests who are not auto-admitted wait for a host to let them in). True by default — the safe, gate-the-door setting; set False for open drop-in rooms. A client can override per room.",
       "behavior": "true: non-auto-admitted joiners wait for host admission; false: the lobby is off and joiners are admitted directly."
+    },
+    "CALL_RING_TIMEOUT_SECONDS": {
+      "business_label": "How long a 1:1 call rings before it is missed",
+      "summary": "The product's patience, in seconds (45 by default). It is visible to both people: the caller's screen counts down against this exact deadline, and past it the call becomes a missed call with a notification and a line in the conversation. Shorter feels brusque; longer leaves a caller staring at a ring nobody is going to answer.",
+      "behavior": "Seconds from the start of the ring. A ringing call past this horizon reads as `missed` on any read, and the sweeper transitions it for two people who both walked away."
+    },
+    "CALL_MAX_DURATION_SECONDS": {
+      "business_label": "The longest a 1:1 call may run",
+      "summary": "A hard stop on a call nobody hangs up — two phones face down on two tables (two hours by default). The media server's own idle timeout never fires for it, because the room is not empty; without this the call is metered for as long as both browsers stay open.",
+      "behavior": "Seconds from the moment the call was answered. The sweeper ends a call past this with end_reason `max_duration`."
+    },
+    "CALL_NOTIFY_ON_RING": {
+      "business_label": "Whether an incoming call also sends a push notification",
+      "summary": "On by default. The in-app socket only reaches a browser that is open, and the case a calling feature exists for is a phone in a pocket — so a ring also asks the notifications service for a push. Turn it off for a deployment that wants calls to be a foreground-only feature. A MISSED call is notified either way.",
+      "behavior": "true: a `call.incoming` notification is requested when the ring starts; false: only the realtime frame goes out. Not gated on the callee being offline — the fleet has no liveness oracle to gate on."
+    },
+    "CALL_AUTHORIZER": {
+      "business_label": "Who is allowed to call whom",
+      "summary": "The rule deciding whether one person may make another person's phone ring. The default requires both of them to be participants of the conversation the call hangs off — because a user id is not a phone number, and without the rule the id on a public listing page is a ringer. Point it at your own callable for a deployment with a different notion of who may reach whom.",
+      "behavior": "A dotted path to (request, *, caller, callee_id, thread_key) -> bool. Fail-closed: no thread, no answer from the conversation service, or no verdict is a refusal."
     }
   },
   "surface_roots": [
@@ -129,6 +159,14 @@
     {
       "select": "functions",
       "path": "tasks.py"
+    },
+    {
+      "select": "functions",
+      "path": "calls/services.py"
+    },
+    {
+      "select": "functions",
+      "path": "calls/realtime.py"
     }
   ],
   "surface": {
@@ -288,6 +326,62 @@
         "channels.layers.get_channel_layer",
         "stapel_core.comm.signal"
       ]
+    },
+    "sweep_calls": {
+      "kind": "gate_function",
+      "intent": "The schedulable form of the call reconciler — a plain callable for cron, a Celery task where celery is installed. It is the only thing that expires a ring nobody answered when neither party ever asks again, and the only thing that closes an accepted call whose participant_left was lost; without it such a call is metered forever and blocks both parties from calling anybody else."
+    },
+    "create_call": {
+      "kind": "factory",
+      "intent": "Place a 1:1 call end to end: authorize the pair against the thread, refuse a party who is already on a call, write the row, provision a two-seat media room and mint the CALLER's short-lived grant. Reach for this for any product path that rings somebody. Creating a Room and handing out a join code instead gives the call a shareable secret and a lobby, which is a conference with two people in it, not a call.",
+      "instead_of": [
+        "stapel_video.services.create_room",
+        "stapel_video.providers.VideoProvider.mint_join_token"
+      ]
+    },
+    "accept_call": {
+      "kind": "gate_function",
+      "intent": "The callee's yes, as one operation: re-checks that neither party got onto another call while it rang, moves ringing->accepted under a conditional update, mints the CALLEE's grant and tells the caller. The callee's token exists nowhere before this — it is deliberately absent from the ring frame — so a product that flips the state itself has admitted somebody with no credential."
+    },
+    "decline_call": {
+      "kind": "gate_function",
+      "intent": "The callee's no. Terminal, and it tells the caller and writes the thread line; a bare state write does neither, and the caller's screen keeps ringing."
+    },
+    "hangup_call": {
+      "kind": "gate_function",
+      "intent": "Either party ends the call, from either live state. Records the duration once (answered_at -> ended_at), frames both screens and writes the thread line. A caller who hangs up mid-ring ends the call rather than missing it — somebody was there and stopped waiting, which is a different fact from nobody answering."
+    },
+    "close_from_room": {
+      "kind": "gate_function",
+      "intent": "End whatever call lives in a media room, by room name — the one door the three independent witnesses of an ending share (the participant_left webhook, room_finished, and the reconciler). Idempotent by construction, so the second witness to arrive changes nothing rather than restating the duration."
+    },
+    "expire_call": {
+      "kind": "gate_function",
+      "intent": "Ring timeout: ringing -> missed, with the frame, the missed-call push and the thread line. Reads already expire an overdue ring on their own, so this is what makes the transition happen for two people who both walked away."
+    },
+    "get_call": {
+      "kind": "factory",
+      "intent": "One call, for its two parties and nobody else — a stranger gets None, which the view turns into the same 404 a non-existent call gets. Use it instead of a bare queryset lookup: it is where the party check and the lazy ring expiry both live, so a hand-rolled read answers about other people's calls and about rings that are already over."
+    },
+    "active_call_for": {
+      "kind": "factory",
+      "intent": "This person's live call, or None — the read a client makes on mount and on every realtime reconnect. The ring socket is best-effort, so this is the repair for both a lost call.incoming (a call that never rang) and a lost call.ended (a ring that never stops)."
+    },
+    "mint_token_for": {
+      "kind": "factory",
+      "intent": "Re-mint a live call's media grant for one of its parties. It exists because a media token is presented again on every full reconnect and nothing re-mints it automatically — without this the token's TTL is a hard ceiling on coming back from a tunnel, and the failure reads as a network fault rather than an expiry."
+    },
+    "user_stream": {
+      "kind": "factory",
+      "intent": "The stream key for one person's call inbox — video:user:<user_id>, the address a browser subscribes to and the one a ring publishes on. Call it instead of formatting the key: the scope is part of the name, which is what makes a ring physically unable to reach anybody else."
+    },
+    "user_group": {
+      "kind": "factory",
+      "intent": "The Channels group a call inbox maps to. Delegated to the substrate rather than formatted, because two answers to 'which group is this stream' is a fan-out that reaches nobody."
+    },
+    "notify_user": {
+      "kind": "gate_function",
+      "intent": "Signal one of the four call facts (call.incoming / accepted / declined / ended) to one person — the one call for reaching a ringing client, instead of taking the channel layer or the wire envelope into your own hands. Best-effort by contract: the Call row is the truth and GET /calls/active is how a client that missed a frame recovers."
     }
   }
 }

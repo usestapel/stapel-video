@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 #: Names a beat schedule must reference (stable across refactors).
 SWEEP_TASK_NAME = "stapel_video.tasks.sweep_presence"
 PURGE_TASK_NAME = "stapel_video.tasks.purge_presence_spans"
+CALL_SWEEP_TASK_NAME = "stapel_video.tasks.sweep_calls"
 
 
 def sweep_presence() -> dict:
@@ -49,6 +50,13 @@ def purge_presence_spans() -> int:
     deleted = purge_participant_spans()
     logger.info("video presence retention purge: %s span(s) deleted", deleted)
     return deleted
+
+
+def sweep_calls() -> dict:
+    """Expire overdue rings, cap runaway calls, close the ones nobody ended."""
+    from .calls.sweeper import sweep_calls as _sweep
+
+    return _sweep()
 
 
 def get_video_beat_schedule() -> dict:
@@ -77,11 +85,19 @@ def get_video_beat_schedule() -> dict:
     from .conf import video_settings
 
     interval = int(video_settings.PRESENCE_SWEEP_INTERVAL_SECONDS or 60)
+    call_interval = int(video_settings.CALL_SWEEP_INTERVAL_SECONDS or 10)
     purge = dict(video_settings.PRESENCE_PURGE_SCHEDULE or {"hour": 4, "minute": 10})
     return {
         "video-presence-sweep": {
             "task": SWEEP_TASK_NAME,
             "schedule": timedelta(seconds=interval),
+        },
+        # Much tighter than the presence sweep, and for a different reason:
+        # that one bounds a metering error, this one bounds how long a caller
+        # stares at a ring that is already over. A person is waiting on it.
+        "video-call-sweep": {
+            "task": CALL_SWEEP_TASK_NAME,
+            "schedule": timedelta(seconds=call_interval),
         },
         "video-presence-retention-purge": {
             "task": PURGE_TASK_NAME,
@@ -96,13 +112,16 @@ except ImportError:
     pass
 else:
     sweep_presence = shared_task(name=SWEEP_TASK_NAME)(sweep_presence)
+    sweep_calls = shared_task(name=CALL_SWEEP_TASK_NAME)(sweep_calls)
     purge_presence_spans = shared_task(name=PURGE_TASK_NAME)(purge_presence_spans)
 
 
 __all__ = [
+    "CALL_SWEEP_TASK_NAME",
     "PURGE_TASK_NAME",
     "SWEEP_TASK_NAME",
     "get_video_beat_schedule",
     "purge_presence_spans",
+    "sweep_calls",
     "sweep_presence",
 ]

@@ -3,10 +3,26 @@ from pathlib import Path
 
 from stapel_tools.capabilities import axis_group_rules, run_capabilities_cli
 
-#: The three CTO-facing config axes (capability-config.md §16). Every OTHER
-#: DEFAULTS key is an extension seam (SCOPE_PROVIDER dotted path) or a tuning
-#: knob (LiveKit credentials, token TTL, egress store).
-_AXES = {"VIDEO_PROVIDER", "DEFAULT_ACCESS_LEVEL", "DEFAULT_ADMIT_REQUIRED"}
+#: The CTO-facing config axes (capability-config.md §16). Every OTHER DEFAULTS
+#: key is an extension seam (SCOPE_PROVIDER, CALL_AUTHORIZER — dotted paths) or
+#: a tuning knob (LiveKit credentials, sweep cadences, egress store).
+#:
+#: The four call keys added in 0.11.0 are axes and not knobs because each one
+#: is visible to the two people on the call: how long their phone rings, how
+#: long a call may run, whether it reaches them out of the app at all, and who
+#: is allowed to reach them. CALL_AUTHORIZER is both — an axis (a product
+#: decision about reachability) and a seam (a dotted path), and it is listed in
+#: both sections for that reason rather than being filed under whichever one
+#: was noticed first.
+_AXES = {
+    "VIDEO_PROVIDER",
+    "DEFAULT_ACCESS_LEVEL",
+    "DEFAULT_ADMIT_REQUIRED",
+    "CALL_RING_TIMEOUT_SECONDS",
+    "CALL_MAX_DURATION_SECONDS",
+    "CALL_NOTIFY_ON_RING",
+    "CALL_AUTHORIZER",
+}
 
 
 def main(argv=None):
@@ -28,6 +44,10 @@ def main(argv=None):
                 "VIDEO_PROVIDER": "video.provider",
                 "DEFAULT_ACCESS_LEVEL": "video.access",
                 "DEFAULT_ADMIT_REQUIRED": "video.admission",
+                "CALL_RING_TIMEOUT_SECONDS": "video.calls",
+                "CALL_MAX_DURATION_SECONDS": "video.calls",
+                "CALL_NOTIFY_ON_RING": "video.calls",
+                "CALL_AUTHORIZER": "video.calls",
             }
         ),
         prog="stapel-video-capabilities",

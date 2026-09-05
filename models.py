@@ -267,3 +267,22 @@ class ParticipantSpan(models.Model):
     @property
     def is_open(self) -> bool:
         return self.left_at is None
+
+
+# ── 1:1 calls (0.11.0) ─────────────────────────────────────────────────────
+# Re-exported, not defined here. Django imports `<app>.models` and nothing
+# below it, so a model in a sub-package is invisible to makemigrations until
+# something in this module names it — and "invisible to makemigrations" is a
+# table that never gets created, on a deployment where every check is green.
+# The definitions live in calls/models.py because the call lifecycle is a
+# package, not because it is a different app: `app_label = "video"` is
+# explicit on the model.
+from .calls.models import (  # noqa: E402,F401
+    LIVE_STATES,
+    TERMINAL_STATES,
+    Call,
+    CallEndReason,
+    CallMedia,
+    CallState,
+    room_name_for,
+)

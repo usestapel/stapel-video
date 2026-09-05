@@ -152,6 +152,100 @@ class VideoProvider(ABC):
         """
         raise NotImplementedError
 
+    # ── 1:1 calls (0.11.0) ─────────────────────────────────────────────
+
+    def ensure_call_room(
+        self,
+        provider_room_ref: str,
+        *,
+        max_participants: int = 2,
+        empty_timeout_seconds: int = 60,
+        metadata: dict | None = None,
+    ) -> str:
+        """Provision a room that physically cannot hold more than two people.
+
+        The difference from :meth:`create_room` is the cap, and the cap is the
+        whole point. A 1:1 call's first lock is the grant — one room, minted
+        for two named people — but a grant is a signed string, and a signed
+        string can be copied out of a browser. A media server that refuses the
+        third connection cannot be talked out of it, which is why this costs a
+        round trip where ``create_room`` costs none.
+
+        ``empty_timeout_seconds`` is how long the provider keeps the room
+        alive with nobody in it. It is short on purpose: a call room outlives
+        its call by exactly the time it takes the second party to reconnect.
+
+        Returns the ``provider_room_ref`` (normally ``provider_room_ref``
+        unchanged). Raise :class:`VideoProviderError` on a transport failure.
+
+        Default ``NotImplementedError``, like the egress trio: a token-only
+        backend stays valid, and the caller says once, at warning, that the
+        cap is not in force on this deployment rather than discovering it from
+        a screenshot with three faces in it.
+        """
+        raise NotImplementedError
+
+    def mint_call_token(
+        self,
+        provider_room_ref: str,
+        user_id,
+        user_name: str,
+        user_avatar: str = "",
+        client_session_id: str | None = None,
+        scope_key: str | None = None,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> str:
+        """A join token for a 1:1 call — with the permissions written down.
+
+        Same identity, name, avatar and ``scope_key`` contract as
+        :meth:`mint_join_token`; everything said there applies here. Two
+        things differ, and both are the reason this is a separate method
+        rather than a kwarg on that one.
+
+        **The grant is explicit.** ``mint_join_token`` asks for ``room_join``
+        and lets the vendor's defaults decide the rest, which is a reasonable
+        posture for a conference room whose product IS everything a
+        participant can do. A call has a smaller, stateable answer —
+        publish and subscribe media, and nothing else — and an implementation
+        must state it rather than inherit it. In particular it must NOT grant
+        data-channel publishing: messaging in a product that has a chat module
+        belongs to the chat module, and a data channel is an unpersisted,
+        unmoderated, un-erasable message store living inside a media session.
+        Denying it in the grant is what makes that a property rather than a
+        convention some future front-end code can quietly break.
+
+        **The TTL is the caller's.** ``ttl_seconds`` overrides the provider's
+        configured join TTL. Mind what a TTL means here: the token is
+        presented AGAIN on every full reconnect and nothing re-mints it, so
+        the TTL is a ceiling on reconnecting rather than a limit on the
+        credential's blast radius. Short values produce calls that connect,
+        run, and then cannot come back from a tunnel.
+
+        Default ``NotImplementedError``: an out-of-tree provider stays valid,
+        and the caller falls back to ``mint_join_token`` — saying, once, which
+        of the two guarantees above it just lost.
+        """
+        raise NotImplementedError
+
+    def client_url(self) -> str:
+        """Where the BROWSER connects to reach this backend.
+
+        Not where we connect. On a host-networked deployment the server talks
+        to the media server at something like
+        ``http://host.docker.internal:7880`` while the browser must be sent to
+        ``wss://example.com/rtc`` — two addresses that were never
+        distinguished here because until 0.11.0 no endpoint of this module
+        ever told a client where to dial.
+
+        Returns "" for a provider that has nothing to say, which is a valid
+        answer for a host that serves the media address to its front by its
+        own means. Raise nothing: a caller that cannot learn the URL still has
+        a valid token, and a boot check is where an unconfigured deployment
+        should find out.
+        """
+        raise NotImplementedError
+
     # ── Room metadata ──────────────────────────────────────────────────
 
     def get_room_metadata(self, provider_room_ref: str) -> dict:

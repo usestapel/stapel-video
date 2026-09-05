@@ -38,7 +38,18 @@ BUILTIN_WEBHOOK_HANDLERS: dict[str, str] = {
     "egress_ended": "stapel_video.webhooks.handle_egress_ended",
     "egress_updated": "stapel_video.webhooks.handle_egress_ended",
     "participant_joined": "stapel_video.presence.handle_participant_joined",
-    "participant_left": "stapel_video.presence.handle_participant_left",
+    # NOT presence.handle_participant_left directly, since 0.11.0: a departure
+    # is now two facts (a span closes, and a 1:1 call ends), and this entry is
+    # where they are composed. Composing INSIDE the builtin rather than by
+    # runtime registration is deliberate — register_webhook_handler outranks a
+    # host's WEBHOOK_HANDLERS overlay, and a library must not win that
+    # argument with its own host. A host that replaces this entry replaces
+    # both behaviours, which is the same bargain it always had.
+    "participant_left": "stapel_video.webhooks.handle_participant_left",
+    # New in 0.11.0. This event arrived, verified, and was dropped for five
+    # releases; a call needs it, because a room the media server closes is a
+    # call that is over whether or not anybody's `participant_left` survived.
+    "room_finished": "stapel_video.webhooks.handle_room_finished",
 }
 
 # event -> dotted path | callable | None (None masks the event).
@@ -158,6 +169,57 @@ def handle_egress_ended(parsed: dict) -> None:
         )
 
 
+def handle_participant_left(parsed: dict) -> None:
+    """A connection ended: close its presence span, and end its call.
+
+    Two facts, one event, in a fixed order. The span first, because it is the
+    meter and the meter is what money is computed from; the call second,
+    because ending it fans out frames and writes a chat line, and none of that
+    should be able to cost a metering row if it throws.
+
+    In a 1:1 call either party leaving ends it — there is nobody left to talk
+    to — so no roster count is consulted. That is the difference from a
+    conference, where one departure is an ordinary event.
+    """
+    from . import presence
+
+    presence.handle_participant_left(parsed)
+
+    room_key = str((parsed.get("room") or {}).get("name") or "")
+    if not room_key:
+        return
+    from .calls.models import CallEndReason
+    from .calls.services import close_from_room
+
+    close_from_room(
+        room_key,
+        at=parsed.get("event_ts"),
+        reason=CallEndReason.REMOTE_LEFT,
+    )
+
+
+def handle_room_finished(parsed: dict) -> None:
+    """The media server closed a room: whatever call lived in it is over.
+
+    The independent witness for a departure whose `participant_left` never
+    arrived — webhook delivery is at-least-once, which is a promise about
+    duplicates and not about losses. Idempotent: `close_from_room` is a
+    conditional UPDATE, so arriving after the hangup that already ended the
+    call changes nothing.
+    """
+    room_key = str((parsed.get("room") or {}).get("name") or "")
+    if not room_key:
+        return
+    from .calls.models import CallEndReason
+    from .calls.services import close_from_room
+
+    close_from_room(
+        room_key,
+        at=parsed.get("event_ts"),
+        reason=CallEndReason.ROOM_FINISHED,
+    )
+
+
 def _is_egress_ended(parsed: dict) -> bool:
     event = (parsed.get("event") or "").lower()
     status = (parsed.get("status") or "").upper()
@@ -172,6 +234,8 @@ __all__ = [
     "get_webhook_handler",
     "get_webhook_handlers",
     "handle_egress_ended",
+    "handle_participant_left",
+    "handle_room_finished",
     "register_webhook_handler",
     "unregister_webhook_handler",
 ]

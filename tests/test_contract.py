@@ -46,12 +46,13 @@ TRIAD = ("schema.json", "flows.json", "errors.json")
 # docs/capabilities.json (+schema/errors/flows) by stapel_tools.llms_txt.
 ARTIFACTS = TRIAD + ("capabilities.json", "llms.txt")
 #: Must match the Makefile's `contract` / `contract-check` targets. Raised to
-#: 6000 in 0.7.0 (from the 5000 that 0.6.0 set, itself from the generator's
-#: 4000 default) when the scope dimension added six surface entries, two comm
-#: Functions and the USAGE_AUTHORIZER seam — the same deliberate exception
-#: stapel-calendar (5000), stapel-workspaces (4500) and stapel-auth (8000)
-#: already take. The budget stays enforced, just at 6000.
-LLMS_TXT_BUDGET = "6000"
+#: 8500 in 0.11.0 (from 6000 in 0.7.0, from 5000 in 0.6.0, from the
+#: generator's 4000 default) when 1:1 calls added a second lifecycle to the
+#: module — nine surface entries, four config axes and six error keys. Same
+#: deliberate exception stapel-calendar (5000), stapel-workspaces (4500) and
+#: stapel-auth (8000) already take. The budget stays enforced, just at 8500;
+#: this constant existing is what makes a silent raise impossible.
+LLMS_TXT_BUDGET = "8500"
 
 
 def _emit(out_dir: Path) -> None:
@@ -155,11 +156,31 @@ def _capabilities() -> dict:
     return json.loads((DOCS / "capabilities.json").read_text())
 
 
-def test_capabilities_three_axes():
+def test_capabilities_axes():
+    """The exact axis set, restated here so a new one is a decision.
+
+    An axis is what a CTO conversation asks about, and the emitter derives the
+    list from `_capabilities._AXES`. Asserting the set — rather than a
+    membership check — is what stops a tuning knob drifting into the CTO
+    catalogue, and what makes adding a real axis a two-file edit somebody has
+    to mean.
+    """
     axes = {a["key"]: a for a in _capabilities()["axes"]}
-    assert set(axes) == {"VIDEO_PROVIDER", "DEFAULT_ACCESS_LEVEL", "DEFAULT_ADMIT_REQUIRED"}
+    assert set(axes) == {
+        "VIDEO_PROVIDER",
+        "DEFAULT_ACCESS_LEVEL",
+        "DEFAULT_ADMIT_REQUIRED",
+        # 0.11.0 — each of the four is visible to the two people on the call:
+        # how long their phone rings, how long a call may run, whether it
+        # reaches them out of the app at all, and who may reach them.
+        "CALL_RING_TIMEOUT_SECONDS",
+        "CALL_MAX_DURATION_SECONDS",
+        "CALL_NOTIFY_ON_RING",
+        "CALL_AUTHORIZER",
+    }
     assert axes["DEFAULT_ACCESS_LEVEL"]["default"] == "restricted"
     assert axes["DEFAULT_ADMIT_REQUIRED"]["kind"] == "bool"
+    assert axes["CALL_RING_TIMEOUT_SECONDS"]["default"] == 45
     for axis in axes.values():
         # Behavioral, not gating: they change behavior, not which endpoints exist.
         assert axis["gates"]["operations"] == []
@@ -168,7 +189,14 @@ def test_capabilities_three_axes():
 
 def test_capabilities_extension_points_cover_the_seams():
     names = {e["name"] for e in _capabilities()["extension_points"]}
-    assert {"VIDEO_PROVIDER", "SCOPE_PROVIDER", "video.egress_ended"} <= names
+    assert {
+        "VIDEO_PROVIDER",
+        "SCOPE_PROVIDER",
+        "video.egress_ended",
+        # The call seams: who may ring whom, and where the thread line goes.
+        "CALL_AUTHORIZER",
+        "CALL_THREAD_MESSAGE_FUNCTION",
+    } <= names
 
 
 def test_capabilities_operations_total_matches_schema():

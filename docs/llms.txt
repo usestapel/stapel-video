@@ -1,12 +1,20 @@
-# stapel-video 0.10.0
+# stapel-video 0.11.0
 
 Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.
 
-Contract: axes 3 · surface 32 · extension points 13 · operations 8 · error codes 51.
+Contract: axes 7 · surface 45 · extension points 15 · operations 15 · error codes 57.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
 Settings keys; `default` is what you get by saying nothing. Turning an axis off unmounts the operations it gates.
+- CALL_AUTHORIZER [enum, default "stapel_video.calls.authorize.thread_participants"] — Who is allowed to call whom
+  The rule deciding whether one person may make another person's phone ring. The default requires both of them to be participants of the conversation the call hangs off — because a user id is not a phone number, and without the rule the id on a public listing page is a ringer. Point it at your own callable for a deployment with a different notion of who may reach whom.
+- CALL_MAX_DURATION_SECONDS [enum, default 7200] — The longest a 1:1 call may run
+  A hard stop on a call nobody hangs up — two phones face down on two tables (two hours by default). The media server's own idle timeout never fires for it, because the room is not empty; without this the call is metered for as long as both browsers stay open.
+- CALL_NOTIFY_ON_RING [bool, default true] — Whether an incoming call also sends a push notification
+  On by default. The in-app socket only reaches a browser that is open, and the case a calling feature exists for is a phone in a pocket — so a ring also asks the notifications service for a push. Turn it off for a deployment that wants calls to be a foreground-only feature. A MISSED call is notified either way.
+- CALL_RING_TIMEOUT_SECONDS [enum, default 45] — How long a 1:1 call rings before it is missed
+  The product's patience, in seconds (45 by default). It is visible to both people: the caller's screen counts down against this exact deadline, and past it the call becomes a missed call with a notification and a line in the conversation. Shorter feels brusque; longer leaves a caller staring at a ring nobody is going to answer.
 - DEFAULT_ACCESS_LEVEL [enum, default "restricted"] — How open new rooms are by default
   The admission level a room gets when the creator does not pick one. "public": anyone with the join code joins instantly. "scope_trusted": members of the same workspace/org/tenant join instantly, outsiders wait. "restricted" (default): everyone but the host waits in the lobby. A client can always override per room.
 - DEFAULT_ADMIT_REQUIRED [bool, default true] — Whether new rooms start with a waiting room
@@ -17,17 +25,25 @@ Settings keys; `default` is what you get by saying nothing. Turning an axis off 
 ## Usage surface — call these before writing your own
 This is the answer to "does Stapel already have something for X?". `instead of` names the outside symbol this one displaces.
 ### gate_function
+- accept_call — stapel_video.calls.services.accept_call
+  The callee's yes, as one operation: re-checks that neither party got onto another call while it rang, moves ringing->accepted under a conditional update, mints the CALLEE's grant and tells the caller. The callee's token exists nowhere before this — it is deliberately absent from the ring frame — so a product that flips the state itself has admitted somebody with no credential.
 - admit_participant — stapel_video.services.admit_participant
   The host's yes, as one operation: flips a waiting participant to admitted, mints that guest's join token and pushes lobby.admitted to the room group. A custom host console or moderation bot calls this instead of writing RoomParticipant.status itself — a bare status write admits nobody, because no token is issued and the waiting client is never told.
 - backfill_scope_keys — stapel_video.presence.backfill_scope_keys
   Stamp scope_key onto spans recorded before the grant carried one, using a host callable room_key -> scope_key|None (the management command video_backfill_scope is its CLI). Idempotent because the population is defined as scope_key IS NULL, so a crashed run resumes and a second run is a no-op — an UPDATE written by hand is neither.
+- close_from_room — stapel_video.calls.services.close_from_room
+  End whatever call lives in a media room, by room name — the one door the three independent witnesses of an ending share (the participant_left webhook, room_finished, and the reconciler). Idempotent by construction, so the second witness to arrive changes nothing rather than restating the duration.
 - close_span — stapel_video.presence.close_span
   instead of: stapel_video.models.ParticipantSpan.save
   End one open span, clamped to be no earlier than its start. A conditional update, so an already-closed span stands and two racing closers resolve to the first — append-only enforced by the database, not by every caller remembering it.
 - close_spans_explicitly — stapel_video.presence.close_spans_explicitly
   The host's leave button and kick path: close what this person still has open in this room. Deliberately weak — never reopens or re-dates, so a grace-window policy stays a product policy and a return opens a new span.
+- decline_call — stapel_video.calls.services.decline_call
+  The callee's no. Terminal, and it tells the caller and writes the thread line; a bare state write does neither, and the caller's screen keeps ringing.
 - deny_participant — stapel_video.services.deny_participant
   The host's no, and it is sticky: a denied guest's re-join stays denied rather than returning to the lobby, and lobby.denied goes out to the room group. Call it instead of deleting the participant row — a deleted row comes back as a fresh WAITING arrival on the next join, which is a knock the host has to answer again.
+- expire_call — stapel_video.calls.services.expire_call
+  Ring timeout: ringing -> missed, with the frame, the missed-call push and the thread line. Reads already expire an overdue ring on their own, so this is what makes the transition happen for two people who both walked away.
 - handle_participant_joined — stapel_video.presence.handle_participant_joined
   The built-in reaction to the media server's participant_joined webhook: open a presence span on the PROVIDER's join timestamp. Registered by default; name it in WEBHOOK_HANDLERS only to wrap it. Reading the event yourself is how the join time becomes 'when our queue got round to it'.
 - handle_participant_left — stapel_video.presence.handle_participant_left
@@ -35,12 +51,16 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 - handle_webhook — stapel_video.services.handle_webhook
   instead of: livekit.api.WebhookReceiver
   Verify a provider webhook's signature, decode it to a normalized dict and emit video.egress_ended when a recording finished. The shipped ingress view is its only caller in a normal mount; a host that terminates provider webhooks at its own edge (an existing /webhooks router, a queue worker) must feed the raw body and Authorization header through this rather than re-implement verification — an unverified body is an open door into the recording pipeline. A bad signature raises VideoProviderError, which the shipped view maps to a 400.
+- hangup_call — stapel_video.calls.services.hangup_call
+  Either party ends the call, from either live state. Records the duration once (answered_at -> ended_at), frames both screens and writes the thread line. A caller who hangs up mid-ring ends the call rather than missing it — somebody was there and stopped waiting, which is a different fact from nobody answering.
 - join_room — stapel_video.services.join_room
   instead of: livekit.api.AccessToken, stapel_video.providers.VideoProvider.mint_join_token
   THE admission decision: resolves a user against the room's access level and lobby switch into admitted (with a freshly minted join token), waiting (the lobby event goes out to the host's clients) or a sticky denied. Every path that puts a user into a call goes through this — minting a token straight off the provider hands out a media credential that no access level, no host denial and no waiting room ever saw.
 - notify_lobby — stapel_video.realtime.notify_lobby
   instead of: channels.layers.get_channel_layer, stapel_core.comm.signal
   Signal one of the three lobby facts (lobby.waiting / lobby.admitted / lobby.denied) to whoever is watching a room — the one call for reaching those clients, instead of taking the channel layer or the wire envelope into your own hands. It emits through stapel-core's signal(), so the frame is the fleet's v1 envelope and delivery waits for the transaction to commit. Note what it deliberately does NOT do: with no SIGNAL_TRANSPORT configured it returns silently. A feature that must not fail quietly (a host kick, a room PIN) pairs it with a visible fallback; a silent no-op here is exactly how such a feature spends a day in production doing nothing.
+- notify_user — stapel_video.calls.realtime.notify_user
+  Signal one of the four call facts (call.incoming / accepted / declined / ended) to one person — the one call for reaching a ringing client, instead of taking the channel layer or the wire envelope into your own hands. Best-effort by contract: the Call row is the truth and GET /calls/active is how a client that missed a frame recovers.
 - pseudonymize_user — stapel_video.presence.pseudonymize_user
   Erase a person from the meter without destroying the meter: their user_id becomes a keyed digest, so counters and pair overlaps do not move. Already wired into the GDPR provider; deleting the spans instead silently restates closed periods.
 - purge_presence_spans — stapel_video.tasks.purge_presence_spans
@@ -48,14 +68,23 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 - stop_egress — stapel_video.services.stop_egress
   instead of: livekit.api.LiveKitAPI.egress.stop_egress, stapel_video.providers.VideoProvider.stop_room_egress
   Stop an active recording through the configured provider — the counterpart of start_egress and the only stop worth calling: the seam is where "stopping an already-finished egress must not raise" is guaranteed, so a stop racing the natural end of a call is not an error the product has to handle.
+- sweep_calls — stapel_video.tasks.sweep_calls
+  The schedulable form of the call reconciler — a plain callable for cron, a Celery task where celery is installed. It is the only thing that expires a ring nobody answered when neither party ever asks again, and the only thing that closes an accepted call whose participant_left was lost; without it such a call is metered forever and blocks both parties from calling anybody else.
 - sweep_open_spans — stapel_video.presence.sweep_open_spans
   Reconcile open spans against the provider's live roster: confirm who is there, close zombies at their last confirmed moment, open spans for connections whose join webhook was lost. A deployment that meters without it is metering an upper bound, not a duration.
 - sweep_presence — stapel_video.tasks.sweep_presence
   The schedulable form of the sweeper — a plain callable for cron, a Celery task where celery is installed. Nothing else closes a span whose departure webhook was lost.
 ### factory
+- active_call_for — stapel_video.calls.services.active_call_for
+  This person's live call, or None — the read a client makes on mount and on every realtime reconnect. The ring socket is best-effort, so this is the repair for both a lost call.incoming (a call that never rang) and a lost call.ended (a ring that never stops).
+- create_call — stapel_video.calls.services.create_call
+  instead of: stapel_video.providers.VideoProvider.mint_join_token, stapel_video.services.create_room
+  Place a 1:1 call end to end: authorize the pair against the thread, refuse a party who is already on a call, write the row, provision a two-seat media room and mint the CALLER's short-lived grant. Reach for this for any product path that rings somebody. Creating a Room and handing out a join code instead gives the call a shareable secret and a lobby, which is a conference with two people in it, not a call.
 - create_room — stapel_video.services.create_room
   instead of: stapel_video.models.Room.objects.create, stapel_video.providers.VideoProvider.create_room
   Create a call end to end in one transaction: allocate a collision-free join code, provision the media room through the VIDEO_PROVIDER seam and seat the creator as an already-admitted host. Reach for this whenever a product opens a room from its own code (a booking is confirmed, a calendar event starts) — a hand-written Room row is a room with an empty provider_room_ref whose own creator is not a participant, and it fails at the first join.
+- get_call — stapel_video.calls.services.get_call
+  One call, for its two parties and nobody else — a stranger gets None, which the view turns into the same 404 a non-existent call gets. Use it instead of a bare queryset lookup: it is where the party check and the lazy ring expiry both live, so a hand-rolled read answers about other people's calls and about rings that are already over.
 - get_room — stapel_video.services.get_room
   Look a room up by the shareable join code — the join code, not the UUID pk, is the identity every client, URL and invitation carries. Returns None instead of raising, so the caller owns the 404.
 - get_video_beat_schedule — stapel_video.tasks.get_video_beat_schedule
@@ -64,6 +93,8 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   The Channels group name a room's lobby stream maps to — transport plumbing, derived from the stream key by the realtime substrate. Reach for lobby_stream instead unless you are writing a consumer of your own; the group naming has a length ceiling and a character set, and a hand-written f-string stops matching silently the day either changes.
 - lobby_stream — stapel_video.realtime.lobby_stream
   The stream key for one room's lobby — video:lobby:<join_code>, the address a browser subscribes to and the one the fan-out publishes on. Call it instead of formatting the key: the scope is part of the name, which is what makes a lobby frame physically unable to reach another room, and one typo in a hand-built key is a socket that connects and never hears anything.
+- mint_token_for — stapel_video.calls.services.mint_token_for
+  Re-mint a live call's media grant for one of its parties. It exists because a media token is presented again on every full reconnect and nothing re-mints it automatically — without this the token's TTL is a hard ceiling on coming back from a tunnel, and the failure reads as a network fault rather than an expiry.
 - month_bounds — stapel_video.presence.month_bounds
   "2026-08" plus an IANA zone to the half-open month as absolute UTC instants. Use it wherever a report names a month in somebody's local calendar — a hand-rolled first-of-the-month is naive about DST, and the hour it misplaces is the hour a customer disputes.
 - normalize_scope_key — stapel_video.presence.normalize_scope_key
@@ -90,8 +121,16 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
   One PARTITION's window, one row per person — the answer behind a workspace-administration "who talked how much" screen, and the only presence read that groups by scope_key. Reach for it instead of joining the span table to your own rooms and re-deriving the union: seconds are unioned per person (two devices are one human), rooms counts distinct calls rather than spans, and the arithmetic is the same code the invoice-facing aggregate uses.
 - usage_rollup_by_month — stapel_video.presence.usage_rollup_by_month
   usage_rollup cut into calendar months in a caller-named time zone, newest first — the whole table a usage screen draws, in one call. Month boundaries are LOCAL midnight, so a DST month is genuinely an hour short; slicing UTC months yourself puts an hour of March into April for every workspace that is not on UTC.
+- user_group — stapel_video.calls.realtime.user_group
+  The Channels group a call inbox maps to. Delegated to the substrate rather than formatted, because two answers to 'which group is this stream' is a fan-out that reaches nobody.
+- user_stream — stapel_video.calls.realtime.user_stream
+  The stream key for one person's call inbox — video:user:<user_id>, the address a browser subscribes to and the one a ring publishes on. Call it instead of formatting the key: the scope is part of the name, which is what makes a ring physically unable to reach anybody else.
 
 ## Extension points — what a product replaces, fork-free
+- CALL_AUTHORIZER [dotted_path]
+  Swap the rule for who may ring whom. The default reads conversation membership through CALL_PARTICIPANTS_FUNCTION (a comm Function NAME, not an import) and refuses everything it cannot verify; a deployment with no conversation layer points this at its own callable rather than getting an open default.
+- CALL_THREAD_MESSAGE_FUNCTION [comm_function]
+  The comm Function a finished call writes its system line through («Call · 3:12», «Missed call», «Declined») — `chat.post_system_message` by default, reached by name so this module imports no chat model. Empty turns the line off for a deployment with no conversations.
 - SCOPE_PROVIDER [dotted_path]
   Swap how the opaque scope_key (workspace/org/tenant) is resolved from the request and how scope membership is decided — membership is what makes a scope_trusted room auto-admit the caller. The default is a single global scope where every authenticated user is a member.
 - USAGE_AUTHORIZER [dotted_path]
@@ -126,9 +165,16 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 - stapel-recordings (optional) — subscribes to video.egress_ended to finalize the recording upload the egress wrote; recording degrades to a no-op emit without a subscriber
 - stapel-workspaces (optional) — answers the two authorization questions the per-scope usage read asks: workspaces.check_mandate (is the caller a principal at all) and workspaces.check_capability (does the caller hold STAPEL_VIDEO['USAGE_MANDATE'] in the scope they named). Without workspaces installed or routed, the read falls back to STAPEL_VIDEO['USAGE_AUTHORIZER'] — staff-only by default
 
-## HTTP operations (8) — call by operationId, never by a typed path
+## HTTP operations (15) — call by operationId, never by a typed path
 Paths are relative to `/video/api/v1/`.
 ### Video
+- POST /calls/{call_id}/accept — video_api_v1_calls_accept_create
+- GET /calls/active — video_api_v1_calls_active_retrieve
+- POST /calls — video_api_v1_calls_create
+- POST /calls/{call_id}/decline — video_api_v1_calls_decline_create
+- POST /calls/{call_id}/hangup — video_api_v1_calls_hangup_create
+- GET /calls/{call_id} — video_api_v1_calls_retrieve
+- POST /calls/{call_id}/token — video_api_v1_calls_token_create
 - POST /rooms — video_api_v1_rooms_create
 - POST /rooms/{join_code}/join — video_api_v1_rooms_join_create
 - POST /rooms/{join_code}/lobby/admit — video_api_v1_rooms_lobby_admit_create
@@ -138,7 +184,7 @@ Paths are relative to `/video/api/v1/`.
 - GET /scopes/{scope_key}/usage/ — video_api_v1_scopes_usage_retrieve
 - POST /webhook — video_api_v1_webhook_create
 
-## Error codes (51) — the StapelError envelope
+## Error codes (57) — the StapelError envelope
 Render `t(code, params)`; branch UX on the remediation. Localized text lives in docs/errors.<lang>.md, not here.
 - error.400.bad_request [400] fix_input
 - error.400.captcha_invalid [400] retry
@@ -159,6 +205,7 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.400.validation_error [400] fix_input
 - error.400.verification_failed [400] verify
 - error.400.verification_invalid_factor [400] verify
+- error.400.video_call_invalid_callee [400] fix_input
 - error.400.video_invalid_access_level [400] fix_input
 - error.400.video_invalid_usage_period [400] fix_input
 - error.400.video_invalid_webhook [400] fix_input
@@ -168,12 +215,14 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.403.network_blocked [403] contact_support
 - error.403.verification_enrollment_required [403] verify
 - error.403.verification_required [403] verify
+- error.403.video_call_not_allowed [403] retry
 - error.403.video_join_denied [403] retry
 - error.403.video_not_room_host [403] retry
 - error.403.video_not_room_participant [403] retry
 - error.404.ad_not_found [404] retry
 - error.404.not_found [404] retry
 - error.404.verification_challenge_not_found [404] verify
+- error.404.video_call_not_found [404] retry
 - error.404.video_participant_not_found [404] retry
 - error.404.video_room_not_found [404] retry
 - error.404.video_scope_not_found [404] retry
@@ -181,6 +230,8 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.406.not_acceptable [406] retry
 - error.408.request_timeout [408] retry
 - error.409.conflict [409] fix_input
+- error.409.video_call_busy [409] fix_input
+- error.409.video_call_state [409] fix_input
 - error.410.gone [410] retry
 - error.413.payload_too_large [413] retry
 - error.415.unsupported_media_type [415] retry
@@ -191,3 +242,4 @@ Render `t(code, params)`; branch UX on the remediation. Localized text lives in 
 - error.429.too_many_requests [429] wait_and_retry
 - error.500.internal [500] contact_support
 - error.503.mandate_unavailable [503] retry
+- error.503.video_call_provider_unavailable [503] retry
