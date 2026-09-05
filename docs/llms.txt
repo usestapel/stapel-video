@@ -1,8 +1,8 @@
-# stapel-video 0.11.0
+# stapel-video 0.11.1
 
 Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.
 
-Contract: axes 7 · surface 45 · extension points 15 · operations 15 · error codes 57.
+Contract: axes 7 · surface 45 · extension points 16 · operations 15 · error codes 57.
 Generated from docs/capabilities.json by `stapel-llms-txt` — do not edit; drift-gated by `make contract-check`.
 
 ## Configuration axes — what a product switches on
@@ -129,6 +129,8 @@ This is the answer to "does Stapel already have something for X?". `instead of` 
 ## Extension points — what a product replaces, fork-free
 - CALL_AUTHORIZER [dotted_path]
   Swap the rule for who may ring whom. The default reads conversation membership through CALL_PARTICIPANTS_FUNCTION (a comm Function NAME, not an import) and refuses everything it cannot verify; a deployment with no conversation layer points this at its own callable rather than getting an open default.
+- CALL_PRESENCE_FUNCTION [comm_function]
+  The comm Function asked "is this person watching right now" before the incoming-call push — `realtime.is_live` (stapel-realtime 0.2.0) by default, so a browser already showing the ring overlay does not also buzz the phone in the same hand. A NAME because only the process holding the socket knows the answer. Unreachable, erroring or empty pushes unconditionally: an unheard call costs more than a redundant banner.
 - CALL_THREAD_MESSAGE_FUNCTION [comm_function]
   The comm Function a finished call writes its system line through («Call · 3:12», «Missed call», «Declined») — `chat.post_system_message` by default, reached by name so this module imports no chat model. Empty turns the line off for a deployment with no conversations.
 - SCOPE_PROVIDER [dotted_path]

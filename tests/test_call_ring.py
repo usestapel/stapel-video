@@ -248,6 +248,173 @@ def test_a_failing_push_never_breaks_a_call(api_client, user, other_user, settin
     assert _place(api_client, user, other_user).status_code == 201
 
 
+# ── The push, gated on presence (0.11.1) ───────────────────────────────────
+
+
+@pytest.fixture
+def presence(settings):
+    """Register a stand-in ``realtime.is_live`` and point the setting at it.
+
+    Yields a one-element list holding the answer to give, so a test can say
+    "live" or "not live" without writing a provider each time, plus the
+    payloads the gate asked with — which is the half that would otherwise go
+    untested and let the module ask about the CALLER.
+    """
+    from stapel_core.comm import function, function_registry
+
+    answer = [{"live": False, "sessions": 0, "last_seen": None}]
+    asked = []
+    name = "test.realtime_is_live"
+
+    @function(name)
+    def _is_live(payload):
+        asked.append(payload)
+        got = answer[0]
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    settings.STAPEL_VIDEO = {
+        **settings.STAPEL_VIDEO,
+        "CALL_NOTIFY_ON_RING": True,
+        "CALL_PRESENCE_FUNCTION": name,
+    }
+    try:
+        yield answer, asked
+    finally:
+        function_registry._providers.pop(name, None)
+
+
+def test_the_gate_points_at_the_fleet_oracle_by_default():
+    """The default is a NAME stapel-realtime 0.2.0 actually provides.
+
+    Asserted here because every other test in this section registers a
+    stand-in: a typo in the default would leave all of them green and every
+    real deployment pushing unconditionally forever.
+    """
+    from stapel_video.conf import DEFAULTS
+
+    assert DEFAULTS["CALL_PRESENCE_FUNCTION"] == "realtime.is_live"
+
+
+def test_a_callee_who_is_already_watching_gets_no_push(
+    api_client, user, other_user, pushes, presence
+):
+    answer, asked = presence
+    answer[0] = {"live": True, "sessions": 2, "last_seen": None}
+
+    _place(api_client, user, other_user)
+
+    # About the CALLEE, and about no stream family in particular: any open
+    # page of the app is a page that draws the incoming-call overlay.
+    assert asked == [{"user_id": str(other_user.pk)}]
+    assert pushes == []
+
+
+def test_a_callee_who_is_not_watching_still_gets_the_push(
+    api_client, user, other_user, pushes, presence
+):
+    from stapel_video.calls.notify import TYPE_INCOMING
+
+    answer, asked = presence
+    answer[0] = {"live": False, "sessions": 0, "last_seen": None}
+
+    _place(api_client, user, other_user)
+
+    assert asked == [{"user_id": str(other_user.pk)}]
+    assert [t for t, _ in pushes] == [TYPE_INCOMING]
+
+
+def test_an_unreachable_oracle_pushes_unconditionally(
+    api_client, user, other_user, pushes, settings
+):
+    """A deployment without stapel-realtime behaves exactly as 0.11.0 did.
+
+    The name is never registered here, which on the ``inprocess`` transport is
+    what "this deployment does not run presence" looks like. Suppressing the
+    push on that would turn a missing optional dependency into calls that
+    never reach a phone.
+    """
+    from stapel_video.calls.notify import TYPE_INCOMING
+
+    settings.STAPEL_VIDEO = {
+        **settings.STAPEL_VIDEO,
+        "CALL_NOTIFY_ON_RING": True,
+        "CALL_PRESENCE_FUNCTION": "test.no_such_presence_function",
+    }
+    _place(api_client, user, other_user)
+    assert [t for t, _ in pushes] == [TYPE_INCOMING]
+
+
+def test_an_oracle_that_raises_pushes_rather_than_swallowing_the_ring(
+    api_client, user, other_user, pushes, presence
+):
+    from stapel_video.calls.notify import TYPE_INCOMING
+
+    answer, _asked = presence
+    answer[0] = RuntimeError("presence is restarting")
+
+    _place(api_client, user, other_user)
+    assert [t for t, _ in pushes] == [TYPE_INCOMING]
+
+
+def test_an_oracle_that_answers_nonsense_pushes(
+    api_client, user, other_user, pushes, presence
+):
+    """No ``live`` key is not a "yes" — it is an answer nobody can read."""
+    from stapel_video.calls.notify import TYPE_INCOMING
+
+    answer, _asked = presence
+    answer[0] = {"sessions": 3}
+
+    _place(api_client, user, other_user)
+    assert [t for t, _ in pushes] == [TYPE_INCOMING]
+
+
+def test_an_empty_presence_function_asks_nobody_and_pushes(
+    api_client, user, other_user, pushes, settings
+):
+    from stapel_video.calls.notify import TYPE_INCOMING
+
+    settings.STAPEL_VIDEO = {
+        **settings.STAPEL_VIDEO,
+        "CALL_NOTIFY_ON_RING": True,
+        "CALL_PRESENCE_FUNCTION": "",
+    }
+    _place(api_client, user, other_user)
+    assert [t for t, _ in pushes] == [TYPE_INCOMING]
+
+
+def test_a_missed_call_is_never_gated_on_presence(
+    api_client, user, other_user, pushes, presence
+):
+    """By the time a call is missed, "watching" has already been disproved.
+
+    A person can be live on a laptop, leave the room and miss the call; the
+    durable message is the whole point of ``call.missed`` and gating it on the
+    same oracle would delete exactly the notification that matters.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from stapel_video.calls.notify import TYPE_INCOMING, TYPE_MISSED
+    from stapel_video.calls.sweeper import sweep_calls
+
+    answer, _asked = presence
+    answer[0] = {"live": True, "sessions": 1, "last_seen": None}
+
+    call_id = _place(api_client, user, other_user).data["call"]["id"]
+    assert [t for t, _ in pushes] == []  # the ring itself was suppressed
+
+    Call.objects.filter(pk=call_id).update(
+        started_at=timezone.now() - timedelta(seconds=120)
+    )
+    sweep_calls()
+    assert [t for t, _ in pushes] == [TYPE_MISSED]
+    assert TYPE_INCOMING not in [t for t, _ in pushes]
+
+
 # ── The thread line ────────────────────────────────────────────────────────
 
 

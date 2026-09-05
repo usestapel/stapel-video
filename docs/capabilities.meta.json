@@ -104,6 +104,11 @@
       "name": "CALL_THREAD_MESSAGE_FUNCTION",
       "kind": "comm_function",
       "summary": "The comm Function a finished call writes its system line through («Call · 3:12», «Missed call», «Declined») — `chat.post_system_message` by default, reached by name so this module imports no chat model. Empty turns the line off for a deployment with no conversations."
+    },
+    {
+      "name": "CALL_PRESENCE_FUNCTION",
+      "kind": "comm_function",
+      "summary": "The comm Function asked \"is this person watching right now\" before the incoming-call push — `realtime.is_live` (stapel-realtime 0.2.0) by default, so a browser already showing the ring overlay does not also buzz the phone in the same hand. A NAME because only the process holding the socket knows the answer. Unreachable, erroring or empty pushes unconditionally: an unheard call costs more than a redundant banner."
     }
   ],
   "axes": {

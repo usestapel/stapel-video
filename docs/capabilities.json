@@ -1,6 +1,6 @@
 {
   "module": "stapel-video",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "provides": "Video calls: rooms with shareable join codes, an access-level admission model (public / scope-trusted / restricted lobby) with a realtime waiting room over WebSockets, host admit/deny controls, join-token minting through a pluggable video-provider seam (LiveKit by default), a recording-egress seam (start/stop + a video.egress_ended event) that integrates with stapel-recordings by event and never by import, and a presence meter — per-connection spans fed by the media server's own join/leave webhooks, reconciled by a sweeper so a crashed client cannot bill forever, and read back as unioned presence time and a co-presence matrix for whatever prices them, partitioned by an opaque scope_key carried on the join grant so a workspace administrator can read their own people's monthly call time behind their own mandate.",
   "axes": [
     {
@@ -184,6 +184,11 @@
       "name": "CALL_THREAD_MESSAGE_FUNCTION",
       "kind": "comm_function",
       "summary": "The comm Function a finished call writes its system line through («Call · 3:12», «Missed call», «Declined») — `chat.post_system_message` by default, reached by name so this module imports no chat model. Empty turns the line off for a deployment with no conversations."
+    },
+    {
+      "name": "CALL_PRESENCE_FUNCTION",
+      "kind": "comm_function",
+      "summary": "The comm Function asked \"is this person watching right now\" before the incoming-call push — `realtime.is_live` (stapel-realtime 0.2.0) by default, so a browser already showing the ring overlay does not also buzz the phone in the same hand. A NAME because only the process holding the socket knows the answer. Unreachable, erroring or empty pushes unconditionally: an unheard call costs more than a redundant banner."
     }
   ],
   "surface": [

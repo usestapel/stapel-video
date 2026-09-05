@@ -218,6 +218,26 @@ truth.
 duration rides in the body string. The marker keeps its meaning if such a
 field ever arrives.
 
+### 4d. The push suppressor — `CALL_PRESENCE_FUNCTION` (comm Function name)
+
+Before the `call.incoming` push goes out, this Function is asked whether the
+callee has a live realtime session (`realtime.is_live`, stapel-realtime 0.2.0).
+`{"live": true}` skips the push: the person is looking at a browser that is
+already drawing the ring overlay, and a banner beside it is the same call
+arriving twice. Asked with no `family`, because any open page of the app draws
+that overlay.
+
+It is a Function and not an import for the reason the whole seam exists: only
+the process holding the socket knows, and an import would answer from whichever
+service happened to ask.
+
+**Fail-OPEN, and deliberately the opposite of 4b.** No such Function, no route
+to it, an exception, an answer with no `live` key, or an empty setting all
+push. The authorizer refuses on uncertainty because an unauthorized ring is a
+stranger reaching a phone; this one pushes on uncertainty because a suppressed
+push is a call nobody hears. `call.missed` is never gated — by then the ring
+has timed out, which disproves "watching" on its own.
+
 ### 5. Webhook dispatch — `WEBHOOK_HANDLERS` (**merge** registry)
 
 Which provider event runs which handler, in the fleet's standard three-layer

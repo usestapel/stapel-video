@@ -48,6 +48,8 @@ call rather than to an operator:
 - ``CALL_RING_TIMEOUT_SECONDS`` — how long a phone rings.
 - ``CALL_MAX_DURATION_SECONDS`` — the longest a call may run.
 - ``CALL_NOTIFY_ON_RING`` — whether a ring reaches somebody out of the app.
+  Since 0.11.1 the push is suppressed for a callee who is already watching,
+  asked through ``CALL_PRESENCE_FUNCTION``.
 
 The LiveKit credential keys (``LIVEKIT_*``) are tuning knobs, not axes — they
 configure the default provider and are ignored when it is swapped out.
@@ -138,10 +140,19 @@ DEFAULTS = {
     "CALL_THREAD_MESSAGE_FUNCTION": "chat.post_system_message",
     # Whether a ring also asks stapel-notifications for a push. AXIS. On by
     # default because the socket only reaches a browser that is open, and the
-    # case a call feature exists for is a phone in a pocket. NOT gated on the
-    # callee being offline — nothing in the fleet can answer that (see
-    # calls/notify.py).
+    # case a call feature exists for is a phone in a pocket. Since 0.11.1 the
+    # push is suppressed for a callee the fleet says is already watching —
+    # see CALL_PRESENCE_FUNCTION and calls/notify.py.
     "CALL_NOTIFY_ON_RING": True,
+    # Comm Function that answers "is this person watching right now", asked
+    # before the ring push so a browser that is already showing the overlay
+    # does not also buzz the phone in the same hand. A NAME, not an import:
+    # only the process holding the socket knows, and stapel-realtime 0.2.0
+    # provides it. Unreachable — not installed, no route, no provider in this
+    # process — means the push goes out unconditionally, which is what
+    # happened everywhere before the oracle existed. "" asks nobody, same
+    # effect, stated on purpose.
+    "CALL_PRESENCE_FUNCTION": "realtime.is_live",
     # ── LiveKit default-provider credentials (tuning knobs, not axes) ──
     "LIVEKIT_URL": "",
     # Where the BROWSER connects — which is not where we connect. On a

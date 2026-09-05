@@ -4,6 +4,43 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] — 2026-09-06
+
+### Changed — the ring push asks whether the phone is already in the hand
+
+0.11.0 shipped the incoming-call push with a gap named in its own docstring:
+nothing in the fleet could answer "does this user have a live realtime session
+right now", so the push went out on every ring and every client carried the
+workaround of suppressing a banner for a call it was already showing an
+overlay for. stapel-realtime 0.2.0 closed that with `realtime.is_live`, and
+this release asks it.
+
+`notify_incoming` now consults the comm Function named by the new
+`CALL_PRESENCE_FUNCTION` setting (default `realtime.is_live`) and skips the
+push when the answer is `{"live": true}`. It is a Function and not an import
+on purpose: only the process holding the socket knows, and an import would
+answer from whichever service happened to ask.
+
+The question is asked with no `family` — "is this person watching anything at
+all" — because any open page of the app is a page that draws the overlay.
+
+**Every uncertainty still pushes.** A deployment without stapel-realtime
+installed, a transport with no route to the name, an exception, an answer
+with no `live` key, or `CALL_PRESENCE_FUNCTION = ""` all fall through to the
+unconditional push 0.11.0 had. The two failure modes are not symmetric: a
+redundant banner beside a ringing overlay is noise, while a suppressed push is
+a call that never reached a phone in a pocket — the case the push exists for.
+Reachability is checked before the call rather than caught after it, so a
+deployment that simply does not run presence pays no exception per ring.
+
+`call.missed` is never gated. By the time a call is missed, "watching" has
+already been disproved by the ring timing out, and that durable message is the
+one notification the feature is for.
+
+No wire change, no migration, no new dependency floor: stapel-realtime is
+already a hard dependency at `>=0.1.2`, and 0.2.0 is an upgrade a deployment
+takes to get the oracle, not one this module requires to boot.
+
 ## [0.11.0] — 2026-09-05
 
 ### Added — a call is not a conference with two people in it
