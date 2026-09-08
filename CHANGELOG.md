@@ -176,7 +176,7 @@ provider stays valid. `mint_join_token` is untouched.
 ### Added — `POST /calls/{id}/token`, and the reason it is not a nicety
 
 A media token is presented **again** on every full reconnect and nothing
-re-mints it automatically. meettoday raised its own join TTL from one hour to
+re-mints it automatically. A meeting app raised its own join TTL from one hour to
 six for exactly this, with the comment "the TTL is a hard ceiling on
 reconnecting in a long meeting". So a short-lived call token would have
 produced calls that connect, run perfectly, and then cannot come back from a
@@ -751,7 +751,7 @@ its subscribers and never mounts the views. `get_scope_provider` has exactly two
 call sites — `RoomCreateView.post` and `_should_auto_admit`, reached only from
 `services.join_room` via `JoinView` — both behind that surface. With the surface
 unmounted, nothing routes to either, and the only way to satisfy the Error is a
-provider that provably never runs. meettoday's sandbox backend spent the
+provider that provably never runs. A meeting app's sandbox backend spent the
 afternoon down on exactly this.
 
 `check_scope_provider` now passes `surface_mounted` to core, which degrades the

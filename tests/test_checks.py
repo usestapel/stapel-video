@@ -44,7 +44,7 @@ def test_the_shipped_provider_is_an_error_where_workspaces_can_answer():
     ROOT_URLCONF="stapel_video.tests.urls_unmounted",
 )
 def test_an_unmounted_surface_downgrades_the_error_to_a_warning():
-    """meettoday, 2026-08-16: E009 kept a sandbox down over a hole it lacked.
+    """A meeting app, 2026-08-16: E009 kept a sandbox down over a hole it lacked.
 
     A host that owns its own rooms installs this module for its provider seam
     and its subscribers and never mounts the views. Nothing routes to

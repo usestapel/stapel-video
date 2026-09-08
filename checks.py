@@ -86,7 +86,7 @@ def check_scope_provider(app_configs, **kwargs):
     # leaves the rooms surface unmounted, owns its own rooms: the shipped
     # provider decides nothing there because nothing routes to the code that
     # would consult it. Refusing that boot would demand a provider that
-    # provably never runs (meettoday, 2026-08-16).
+    # provably never runs (a meeting app, 2026-08-16).
     return check_shipped_scope_provider(
         setting="STAPEL_VIDEO['SCOPE_PROVIDER']",
         provider=provider,

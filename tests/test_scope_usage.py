@@ -611,5 +611,5 @@ def test_the_command_runs_the_host_s_resolver():
 
 
 def scope_for_room(room_key):
-    """Stand-in for the host's real resolver (meettoday: Room -> workspace_id)."""
+    """Stand-in for the host's real resolver (a meeting app: Room -> workspace_id)."""
     return SCOPE_A if room_key == ROOM else None
