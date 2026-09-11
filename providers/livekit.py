@@ -69,7 +69,33 @@ class LiveKitProvider(VideoProvider):
         user_avatar: str = "",
         client_session_id: str | None = None,
         scope_key: str | None = None,
+        *,
+        can_publish: bool = True,
+        can_subscribe: bool = True,
+        can_publish_data: bool = True,
+        can_publish_sources=None,
+        can_update_own_metadata: bool = False,
     ) -> str:
+        """A room grant, with every permission stated rather than inherited.
+
+        The defaults reproduce what this method has always minted — a meeting
+        seat that publishes, subscribes and uses the data channel the in-call
+        chat rides — with one difference: ``can_update_own_metadata`` is now
+        ``False`` on purpose. The metadata blob carries the avatar other
+        clients render and, since 0.7.0, the ``scope_key`` the usage meter
+        partitions on; a participant that may rewrite it can re-tag its own
+        airtime onto another tenant.
+
+        Until 0.12.0 the grant was ``VideoGrants(room_join=True, room=…)`` and
+        the SDK's dataclass defaults decided the rest. Those defaults happened
+        to be this product's intent, which is not the same as this product
+        having decided: a rule inherited from a vendor default is a rule
+        nobody wrote, nobody can grep for, and the vendor is free to change.
+
+        No ``room_admin`` (that grant is for the server's own twirp calls and
+        is never handed to a browser), no ``room_record``, no ``hidden`` —
+        same list :meth:`mint_call_token` states.
+        """
         import json
         import uuid
 
@@ -95,7 +121,15 @@ class LiveKitProvider(VideoProvider):
             token.with_identity(identity)
             .with_name(user_name)
             .with_ttl(_timedelta_seconds(conf.JOIN_TOKEN_TTL_SECONDS))
-            .with_grants(api.VideoGrants(room_join=True, room=provider_room_ref))
+            .with_grants(api.VideoGrants(
+                room_join=True,
+                room=provider_room_ref,
+                can_publish=can_publish,
+                can_subscribe=can_subscribe,
+                can_publish_data=can_publish_data,
+                can_publish_sources=can_publish_sources,
+                can_update_own_metadata=can_update_own_metadata,
+            ))
         )
         # ALWAYS set metadata, even with an empty avatar, so every client in
         # the room parses one consistent JSON shape instead of branching on

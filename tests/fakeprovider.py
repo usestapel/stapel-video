@@ -72,6 +72,9 @@ class FakeProvider(VideoProvider):
     #: Every ``mint_join_token`` call, as (room_ref, user_id, name, avatar,
     #: client_session_id, scope_key). Same class-level trick as ``renames``.
     mints: list = []
+    #: The permission dict each ``mint_join_token`` was asked for (0.12.0),
+    #: parallel to ``mints``.
+    join_grants: list = []
     #: Every ``remove_participant`` call, as (room_ref, user_id).
     removals: list = []
     #: Every ``mint_call_token`` call, as (room_ref, user_id, name, avatar,
@@ -100,11 +103,24 @@ class FakeProvider(VideoProvider):
         user_avatar: str = "",
         client_session_id=None,
         scope_key=None,
+        *,
+        can_publish: bool = True,
+        can_subscribe: bool = True,
+        can_publish_data: bool = True,
+        can_publish_sources=None,
+        can_update_own_metadata: bool = False,
     ) -> str:
         FakeProvider.mints.append(
             (provider_room_ref, str(user_id), user_name, user_avatar,
              client_session_id, scope_key)
         )
+        FakeProvider.join_grants.append({
+            "can_publish": can_publish,
+            "can_subscribe": can_subscribe,
+            "can_publish_data": can_publish_data,
+            "can_publish_sources": can_publish_sources,
+            "can_update_own_metadata": can_update_own_metadata,
+        })
         identity = (
             f"{user_id}_{client_session_id}" if client_session_id else f"{user_id}_rnd"
         )

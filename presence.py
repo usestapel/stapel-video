@@ -552,16 +552,20 @@ def period_bounds(period: str) -> tuple[datetime, datetime]:
     Workspace-local timezones are an additive switch the day a report needs
     one — the meter stores absolute instants either way.
     """
+    # The month AFTER the one asked for is inside the guard too: "9999-12"
+    # parses fine and its successor is year 10000, which datetime refuses.
+    # Left outside, that ValueError left the function bare and a malformed
+    # query parameter answered 500 instead of 400.
     try:
         year, month = str(period).split("-")
         start = datetime(int(year), int(month), 1, tzinfo=timezone.utc)
-    except (ValueError, TypeError, AttributeError) as exc:
+        end = (
+            datetime(start.year + 1, 1, 1, tzinfo=timezone.utc)
+            if start.month == 12
+            else datetime(start.year, start.month + 1, 1, tzinfo=timezone.utc)
+        )
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
         raise InvalidPeriod(f"{period!r} is not a YYYY-MM month") from exc
-    end = (
-        datetime(start.year + 1, 1, 1, tzinfo=timezone.utc)
-        if start.month == 12
-        else datetime(start.year, start.month + 1, 1, tzinfo=timezone.utc)
-    )
     return start, end
 
 
@@ -592,16 +596,18 @@ def month_bounds(month: str, tz: str | None = None) -> tuple[datetime, datetime]
     without a migration.
     """
     zone = _zone(tz)
+    # Same guard, same reason as period_bounds: the successor month is what
+    # overflows on "9999-12", and it has to be inside the try.
     try:
         year, month_number = (int(part) for part in str(month).split("-"))
         start = datetime(year, month_number, 1, tzinfo=zone)
-    except (ValueError, TypeError, AttributeError) as exc:
+        end = (
+            datetime(year + 1, 1, 1, tzinfo=zone)
+            if month_number == 12
+            else datetime(year, month_number + 1, 1, tzinfo=zone)
+        )
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
         raise InvalidPeriod(f"{month!r} is not a YYYY-MM month") from exc
-    end = (
-        datetime(year + 1, 1, 1, tzinfo=zone)
-        if month_number == 12
-        else datetime(year, month_number + 1, 1, tzinfo=zone)
-    )
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 

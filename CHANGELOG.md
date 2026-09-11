@@ -4,6 +4,54 @@ All notable changes to stapel-video are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/); this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] — 2026-09-11
+
+Two findings from the MEETTODAY + LiveKit security audit of 2026-09-11 (I-1 /
+§7 item 2, and L-8).
+
+### An authorization rule nobody wrote — the join grant was the SDK's defaults
+
+`mint_join_token` built `VideoGrants(room_join=True, room=…)` and let the
+vendor dataclass decide the rest. Those defaults — publish, subscribe, data
+channel, every source — happen to be this product's intent, which is not the
+same as this product having decided: the rule was ungreppable, unstated in any
+review, and the vendor is free to change it in a minor release.
+
+The five permissions are stated in the grant and taken as keyword-only
+parameters, exactly as `mint_call_token` has done since 0.9.0:
+
+| parameter | default | why |
+|---|---|---|
+| `can_publish` | `True` | a meeting seat |
+| `can_subscribe` | `True` | a meeting seat |
+| `can_publish_data` | `True` | the in-call chat rides the data channel |
+| `can_publish_sources` | `None` | every source the provider allows |
+| `can_update_own_metadata` | **`False`** | **new** |
+
+`can_update_own_metadata=False` is the one behaviour change, and it closes a
+real hole: the metadata blob carries the avatar other clients render and,
+since 0.7.0, the `scope_key` the usage meter partitions on. A participant that
+may rewrite its own metadata can re-tag its own airtime onto another tenant.
+No shipped client writes participant metadata.
+
+Everything else mints byte-for-byte what it did before, and
+`tests/test_join_grant_claims.py` proves it against the REAL livekit SDK by
+decoding the signed token and reading the `video` claim — the only thing the
+media server acts on. `VideoProvider.mint_join_token` carries the same
+keyword-only parameters, with the same defaults, so an out-of-tree provider
+that ignores them keeps working.
+
+Minor, not patch: the abstract method's signature grew.
+
+### `?period=9999-12` was a 500 (L-8)
+
+`presence.period_bounds` and `presence.month_bounds` guarded parsing the month
+and not computing the month after it, so the last month the calendar has —
+whose successor is year 10000 — raised a bare `ValueError` out of the function
+that exists to raise `InvalidPeriod`. A malformed query parameter on a
+staff/service surface answered 500 instead of 400. The successor is inside the
+`try` now, and `OverflowError` joins the caught set.
+
 ## [0.11.2] — 2026-09-06
 
 ### Fixed — the browser is told its OWN brand's socket

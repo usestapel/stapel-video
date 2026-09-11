@@ -56,8 +56,25 @@ class VideoProvider(ABC):
         user_avatar: str = "",
         client_session_id: str | None = None,
         scope_key: str | None = None,
+        *,
+        can_publish: bool = True,
+        can_subscribe: bool = True,
+        can_publish_data: bool = True,
+        can_publish_sources=None,
+        can_update_own_metadata: bool = False,
     ) -> str:
         """Return a signed token letting ``user_id`` join ``provider_room_ref``.
+
+        The five keyword-only permissions say what the seat may DO, and they
+        are stated rather than inherited from whatever a vendor SDK's grant
+        object happens to default to (0.12.0). The defaults are the ordinary
+        meeting seat: publish, subscribe, and the data channel an in-call chat
+        rides. ``can_update_own_metadata`` defaults to ``False`` because the
+        metadata blob is where the avatar and the reporting ``scope_key``
+        live — a participant that may rewrite it can re-tag its own airtime.
+        ``can_publish_sources`` is the vendor's own source vocabulary (LiveKit:
+        ``camera``/``microphone``/``screen_share``/``screen_share_audio``),
+        ``None`` meaning "every source this provider allows".
 
         The name travels INSIDE the token, so it is frozen at mint time. A
         provider that can push a later correction into a room the person is

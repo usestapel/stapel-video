@@ -50,12 +50,22 @@ class _FakeGrants:
         room_record=False,
         room_admin=False,
         room_list=False,
+        can_publish=True,
+        can_subscribe=True,
+        can_publish_data=True,
+        can_publish_sources=None,
+        can_update_own_metadata=None,
     ):
         self.room_join = room_join
         self.room = room
         self.room_record = room_record
         self.room_admin = room_admin
         self.room_list = room_list
+        self.can_publish = can_publish
+        self.can_subscribe = can_subscribe
+        self.can_publish_data = can_publish_data
+        self.can_publish_sources = can_publish_sources
+        self.can_update_own_metadata = can_update_own_metadata
 
 
 class _FakeEvent:
