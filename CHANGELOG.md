@@ -6,7 +6,7 @@ All notable changes to stapel-video are documented here. The format follows
 
 ## [0.12.0] — 2026-09-11
 
-Two findings from the MEETTODAY + LiveKit security audit of 2026-09-11 (I-1 /
+Two findings from a consumer fleet's security audit of 2026-09-11 (I-1 /
 §7 item 2, and L-8).
 
 ### An authorization rule nobody wrote — the join grant was the SDK's defaults
