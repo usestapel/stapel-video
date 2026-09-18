@@ -76,6 +76,22 @@ class AdmitResponse:
     token: str
 
 
+@dataclass
+class DenyResponse:
+    """The outcome of a host deny action.
+
+    The symmetric twin of `AdmitResponse`: both answer the lobby
+    entry's state AFTER the decision, so a host screen re-renders the row it
+    just acted on from the response either way. The one difference is the
+    token, and it is the point — a denied participant is minted none.
+
+    Attributes:
+        participant: The now-denied participant (`status` reads `denied`).
+    """
+
+    participant: ParticipantResponse
+
+
 # ── Request DTOs ────────────────────────────────────────────────────────────
 
 

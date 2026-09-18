@@ -20,6 +20,7 @@ from stapel_core.django.api.permissions import (
 from . import services
 from .dto import (
     AdmitResponse,
+    DenyResponse,
     JoinResponse,
     ParticipantListResponse,
     ParticipantResponse,
@@ -44,6 +45,7 @@ from .providers import VideoProviderError
 from .scope import get_scope_provider
 from .serializers import (
     AdmitResponseSerializer,
+    DenyResponseSerializer,
     JoinRequestSerializer,
     JoinResponseSerializer,
     LobbyActionRequestSerializer,
@@ -364,12 +366,25 @@ class LobbyAdmitView(_LobbyActionView):
 
 @extend_schema(tags=["Video"])
 class LobbyDenyView(_LobbyActionView):
-    """Deny a waiting participant (host-only)."""
+    """Deny a waiting participant (host-only). Returns their lobby row.
 
-    response_serializer_class = LobbyActionRequestSerializer
+    The symmetric twin of the admit action: both answer the lobby entry's
+    state after the decision, so a host screen re-renders the row it just
+    acted on from the response either way. The one difference is the token,
+    and it is the point — a denied participant is minted none.
+    """
+
+    # Until 0.13.0 this declared its own REQUEST body as its answer
+    # (`response_serializer_class = LobbyActionRequestSerializer`) while the
+    # method returned a hand-built `{"status": "denied", "participant_id": …}`
+    # the document never mentioned — so a generated client's deny() was typed
+    # LobbyActionRequest and reading `.status` off it was undefined. The
+    # sibling above had a real response DTO all along, which is what made
+    # this a slip rather than a design.
+    response_serializer_class = DenyResponseSerializer
 
     @extend_schema(
-        request=LobbyActionRequestSerializer, responses={200: LobbyActionRequestSerializer}
+        request=LobbyActionRequestSerializer, responses={200: DenyResponseSerializer}
     )
     def post(self, request, join_code):  # noqa: R007
         resolved, err = self._resolve(request, join_code)
@@ -379,7 +394,10 @@ class LobbyDenyView(_LobbyActionView):
         participant = services.deny_participant(room, participant_id)
         if participant is None:
             return StapelErrorResponse(404, ERR_404_PARTICIPANT_NOT_FOUND)
-        return StapelResponse({"status": "denied", "participant_id": str(participant.id)})  # noqa: R006
+        response_cls = self.get_response_serializer_class()
+        return StapelResponse(
+            response_cls(DenyResponse(participant=participant_to_dto(participant)))
+        )
 
 
 @extend_schema(tags=["Video"])

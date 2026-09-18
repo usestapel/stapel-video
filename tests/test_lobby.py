@@ -38,6 +38,12 @@ def test_host_denies_waiting_participant_and_denial_is_sticky(api_client, user, 
         f"/video/api/v1/rooms/{code}/lobby/deny", {"participant_id": pid}, format="json"
     )
     assert resp.status_code == 200
+    # The same shape the admit above answers, minus the token a denied
+    # participant is never minted: the host screen re-renders the row it
+    # just acted on from the response, either way.
+    assert resp.data["participant"]["id"] == str(pid)
+    assert resp.data["participant"]["status"] == "denied"
+    assert "token" not in resp.data
     assert RoomParticipant.objects.get(id=pid).status == ParticipantStatus.DENIED
 
     # A denied guest re-joining stays denied (403), not resurrected to waiting.

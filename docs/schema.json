@@ -495,7 +495,7 @@
     "/video/api/v1/rooms/{join_code}/lobby/deny": {
       "post": {
         "operationId": "video_api_v1_rooms_lobby_deny_create",
-        "description": "Deny a waiting participant (host-only).\n\n**Permissions:** `IsAuthenticated`",
+        "description": "Deny a waiting participant (host-only). Returns their lobby row.\n\nThe symmetric twin of the admit action: both answer the lobby entry's\nstate after the decision, so a host screen re-renders the row it just\nacted on from the response either way. The one difference is the token,\nand it is the point — a denied participant is minted none.\n\n**Permissions:** `IsAuthenticated`",
         "parameters": [
           {
             "in": "path",
@@ -539,7 +539,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LobbyActionRequest"
+                  "$ref": "#/components/schemas/DenyResponse"
                 }
               }
             },
@@ -859,6 +859,23 @@
           "call",
           "token",
           "url"
+        ]
+      },
+      "DenyResponse": {
+        "type": "object",
+        "description": "The outcome of a host deny action.\n\nThe symmetric twin of `AdmitResponse`: both answer the lobby\nentry's state AFTER the decision, so a host screen re-renders the row it\njust acted on from the response either way. The one difference is the\ntoken, and it is the point — a denied participant is minted none.",
+        "properties": {
+          "participant": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ParticipantResponse"
+              }
+            ],
+            "description": "The now-denied participant (`status` reads `denied`)"
+          }
+        },
+        "required": [
+          "participant"
         ]
       },
       "JoinRequest": {

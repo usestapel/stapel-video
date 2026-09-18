@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.13.0] — 2026-09-18
+
+### Fixed — `POST /rooms/{join_code}/lobby/deny` declared its own REQUEST body as its answer
+
+Minor, no migration. **The response body changes**, so a client of this
+endpoint must be updated and the frontend pair regenerated.
+
+`LobbyDenyView` declared `LobbyActionRequestSerializer` — the serializer of
+its own request, one property, `participant_id` — as its 200 response, in
+both `@extend_schema` and `response_serializer_class`. The method ignored
+that serializer and returned a hand-built dict:
+
+```json
+{"status": "denied", "participant_id": "…"}
+```
+
+`status`, the only thing the answer was for, appeared nowhere in the
+contract. A generated client's `deny()` was typed `LobbyActionRequest` and
+reading `.status` off it was `undefined`. Its sibling `LobbyAdmitView` had a
+real response DTO all along, which is what made this a slip rather than a
+design. Note that plain schema validation PASSED the old body — the declared
+`participant_id` was there, and OpenAPI allows unmentioned keys — so only a
+gate that checks the contract ENUMERATES the body could see it.
+
+Deny now answers the same shape admit does: the lobby entry's state after
+the decision.
+
+```
+DenyResponse { participant: ParticipantResponse }
+```
+
+The participant's own `status` reads `denied`, so nothing the old body said
+is lost — `participant_id` is `participant.id` — and a host screen
+re-renders the row it just acted on from the response whichever decision it
+made. The one difference from `AdmitResponse` is the token, and it is the
+point: a denied participant is minted none.
+
+**Migrating.** `body.status === "denied"` becomes
+`body.participant.status === "denied"`; `body.participant_id` becomes
+`body.participant.id`. The endpoint's request, permissions, refusals and the
+`lobby.denied` signal are unchanged.
+
 ## [0.12.1] — 2026-09-17
 
 Patch: delete this module's copies of `gdpr.section.erased` and

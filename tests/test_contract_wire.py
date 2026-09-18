@@ -65,8 +65,13 @@ defect.
   ``response.status`` is ``undefined``, which is the stapel-alerts defect
   exactly. Its sibling ``LobbyAdmitView`` two blocks up does it correctly
   (``AdmitResponse``, a real response DTO), which is what makes this a slip
-  rather than a design. Recorded in ``KNOWN_MISMATCHES``, left exactly as it
-  is: this is a gate, not a fix.
+  rather than a design.
+
+  Closed in 0.13.0: deny answers the SAME shape admit does — the lobby
+  entry's state after the decision, ``DenyResponse {participant}`` — minus
+  the token a denied participant is never minted. The recipe below asserts
+  that state as well as the schema, because the schema alone would accept
+  any lobby row.
 
   Worth stating because it explains why this file carries a second check:
   plain ``jsonschema`` validation passes this body. ``participant_id`` is
@@ -741,29 +746,7 @@ def _call_token(call):
 #: defect AND its owner, and ``strict=True`` turns a fixed one into a failure
 #: until the entry is deleted — so a finding can be neither forgotten nor
 #: quietly kept. Recorded, not fixed: this is a gate.
-KNOWN_MISMATCHES: dict = {
-    ("POST", V1 + "/rooms/{join_code}/lobby/deny"): (
-        "declares its own REQUEST body as its response. Owner: stapel-video, "
-        "views.py:369-373 — LobbyDenyView sets "
-        "`response_serializer_class = LobbyActionRequestSerializer` and "
-        "`@extend_schema(responses={200: LobbyActionRequestSerializer})`, so "
-        "the document publishes `LobbyActionRequest` (one property, "
-        "`participant_id`) for this answer. The method body ignores that "
-        "serializer entirely and returns a hand-built dict, "
-        "`StapelResponse({'status': 'denied', 'participant_id': ...})` "
-        "(views.py:382). `status` — the only thing the answer is FOR — "
-        "appears nowhere in the contract, so a generated client's deny() is "
-        "typed LobbyActionRequest and reading `.status` off it is undefined. "
-        "Its sibling LobbyAdmitView (views.py:338-361) does it correctly "
-        "with a real AdmitResponse DTO, which is what makes this a slip "
-        "rather than a design. The fix is in THIS module: a two-field "
-        "`DenyResponse` dataclass in dto.py with its serializer, named in "
-        "both the annotation and `response_serializer_class`. Note that "
-        "plain jsonschema validation PASSES this body — `participant_id` is "
-        "there and OpenAPI allows unmentioned keys — which is why this file "
-        "also checks the contract enumerates the body (_undeclared_keys)."
-    ),
-}
+KNOWN_MISMATCHES: dict = {}
 
 #: Which pass each recorded mismatch applies to.
 #:
