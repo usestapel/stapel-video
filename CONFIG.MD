@@ -29,6 +29,10 @@ credentials are tuning knobs for the default provider.
 | LIVEKIT_API_KEY | vault | LiveKit API key (default provider). | no | (empty) |
 | LIVEKIT_API_SECRET | vault | LiveKit API secret (default provider). | no | (empty) |
 | JOIN_TOKEN_TTL_SECONDS | env | join-token time-to-live (seconds). | no | 3600 |
+| RTC_STUN_SERVERS | env | STUN URLs added to `ice_servers` on every media grant, e.g. `["stun:stun.example.com:3478"]` (env: space/comma-separated). Empty by default — no third-party host is a default; `stapel_video.W008` warns when STUN and TURN are both empty outside DEBUG / a prototype posture. | no | (empty) |
+| RTC_TURN_SERVERS | env | TURN URLs (`turn:` / `turns:`) added to `ice_servers` with a per-grant time-limited credential. Served only with RTC_TURN_SECRET. | no | (empty) |
+| RTC_TURN_SECRET | vault | shared auth secret of the TURN server (coturn `use-auth-secret`); credentials are derived from it per grant, the secret is never sent. | no | (empty) |
+| RTC_TURN_CREDENTIAL_TTL_SECONDS | env | lifetime of one TURN credential (seconds). | no | 7200 |
 | EGRESS_S3_ENDPOINT | env | recording-egress object-store endpoint (egress seam, off by default). | no | (empty) |
 | EGRESS_S3_BUCKET | env | recording-egress bucket. | no | (empty) |
 | EGRESS_S3_ACCESS_KEY | vault | recording-egress access key. | no | (empty) |

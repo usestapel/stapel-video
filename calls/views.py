@@ -25,6 +25,7 @@ from ..errors import (
     ERR_409_CALL_STATE,
     ERR_503_CALL_PROVIDER,
 )
+from ..ice import ice_servers_for
 from ..views import SerializerSeamMixin
 from . import services
 from .dto import (
@@ -127,7 +128,10 @@ class CallListCreateView(SerializerSeamMixin, APIView):
             return StapelErrorResponse(503, ERR_503_CALL_PROVIDER)
         response_cls = self.get_response_serializer_class()
         return StapelResponse(
-            response_cls(CallTokenResponse(call=call_to_dto(call), token=token, url=url)),
+            response_cls(CallTokenResponse(
+                call=call_to_dto(call), token=token, url=url,
+                ice_servers=ice_servers_for(request.user.pk),
+            )),
             status=status.HTTP_201_CREATED,
         )
 
@@ -220,7 +224,10 @@ class CallAcceptView(_CallActionView):
             return StapelErrorResponse(409, ERR_409_CALL_STATE)
         response_cls = self.get_response_serializer_class()
         return StapelResponse(
-            response_cls(CallTokenResponse(call=call_to_dto(call), token=token, url=url))
+            response_cls(CallTokenResponse(
+                call=call_to_dto(call), token=token, url=url,
+                ice_servers=ice_servers_for(request.user.pk),
+            ))
         )
 
 
@@ -294,7 +301,9 @@ class CallTokenView(_CallActionView):
             call, request.user, self._session_id(request), request=request
         )
         response_cls = self.get_response_serializer_class()
-        return StapelResponse(response_cls(MediaTokenResponse(token=token, url=url)))
+        return StapelResponse(response_cls(MediaTokenResponse(
+            token=token, url=url, ice_servers=ice_servers_for(request.user.pk)
+        )))
 
 
 __all__ = [

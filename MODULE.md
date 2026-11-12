@@ -296,6 +296,26 @@ The seam is `VideoProvider.client_url_for(request)`, whose default delegates to
 `client_url()` — an out-of-tree provider written against 0.11.0 keeps working
 and keeps answering one address.
 
+### 4g. ICE servers for the browser — `RTC_STUN_SERVERS` / `RTC_TURN_*`
+
+Every media grant (`POST /rooms`, an admitted `POST /rooms/{code}/join`,
+`POST /calls`, `/calls/{id}/accept`, `/calls/{id}/token`) carries
+`ice_servers`, a list shaped exactly like `RTCIceServer`
+(`{urls, username, credential}`), which a client passes to the media SDK's
+`rtcConfig.iceServers`. Built by `stapel_video.ice.ice_servers_for(user_id)`:
+
+| Source | Setting | Entry |
+|--------|---------|-------|
+| STUN | `RTC_STUN_SERVERS = ["stun:stun.example.com:3478"]` | `{urls, username: "", credential: ""}` |
+| TURN | `RTC_TURN_SERVERS` + `RTC_TURN_SECRET` | `{urls, username: "<expiry>:<user id>", credential: base64(HMAC-SHA1(secret, username))}` |
+
+Both are empty by default — no third-party host is shipped as a default. TURN
+URLs without a secret are not served (a credential-less TURN entry makes the
+browser reject the whole list). `stapel_video.W008` warns when the list would
+be empty outside DEBUG or a `prototype` posture stage, and when TURN URLs are
+set without a secret. It cannot see ICE servers the media server announces in
+its own handshake.
+
 ### 5. Webhook dispatch — `WEBHOOK_HANDLERS` (**merge** registry)
 
 Which provider event runs which handler, in the fleet's standard three-layer

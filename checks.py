@@ -587,3 +587,65 @@ def _check_client_url_mapping(mapping: dict, default_key: str):
             )
         )
     return problems
+
+
+def _mock_posture() -> bool:
+    """A development or declared-prototype deployment: calls on a LAN or
+    localhost, where no STUN/TURN is the normal state."""
+    from django.conf import settings
+    from stapel_core.django.presets import stage
+
+    return bool(getattr(settings, "DEBUG", False)) or stage() == "prototype"
+
+
+@checks.register(checks.Tags.compatibility)
+def check_ice_servers_are_configured(app_configs, **kwargs):
+    """W008: every grant answers ``ice_servers: []``.
+
+    Without STUN a browser behind NAT offers only host candidates; without
+    TURN two peers behind symmetric NATs (most mobile carriers) cannot meet
+    at all. The token is valid, the room exists, and the call connects on the
+    office Wi-Fi and fails on a phone. Not raised in a mock posture (DEBUG, or
+    ``STAPEL_POSTURE`` stage ``prototype``). Also raised when TURN URLs are set
+    without ``RTC_TURN_SECRET``: they are not served, because a TURN entry
+    without a credential makes the browser reject the whole list.
+
+    What this cannot see: ICE servers the media server announces in its own
+    signalling handshake. A deployment whose media server already hands out
+    reachable STUN/TURN may leave this list empty; say so by listing the same
+    servers here, which costs nothing and survives a media-server swap.
+    """
+    from .conf import video_settings
+    from .ice import stun_urls, turn_urls
+
+    stun = stun_urls()
+    turn = turn_urls()
+    secret = video_settings.RTC_TURN_SECRET or ""
+    problems = []
+    if turn and not secret:
+        problems.append(
+            checks.Warning(
+                "STAPEL_VIDEO['RTC_TURN_SERVERS'] is set but RTC_TURN_SECRET "
+                "is empty, so no TURN server is handed to browsers.",
+                hint=(
+                    "Set RTC_TURN_SECRET to the TURN server's shared auth "
+                    "secret (coturn: use-auth-secret / static-auth-secret)."
+                ),
+                id="stapel_video.W008",
+            )
+        )
+    if not stun and not (turn and secret) and not _mock_posture():
+        problems.append(
+            checks.Warning(
+                "STAPEL_VIDEO has no RTC_STUN_SERVERS and no TURN, so every "
+                "media grant answers ice_servers: [] — calls between peers "
+                "behind NAT may never connect.",
+                hint=(
+                    "Set RTC_STUN_SERVERS (e.g. ['stun:stun.example.com:3478']) "
+                    "and, for mobile networks, RTC_TURN_SERVERS + "
+                    "RTC_TURN_SECRET. See stapel_video.ice."
+                ),
+                id="stapel_video.W008",
+            )
+        )
+    return problems

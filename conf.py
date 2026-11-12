@@ -191,6 +191,22 @@ DEFAULTS = {
     "LIVEKIT_API_SECRET": "",
     # Join-token time-to-live in seconds.
     "JOIN_TOKEN_TTL_SECONDS": 3600,
+    # ── ICE servers handed to the browser (stapel_video.ice) ──────────
+    # Added to the media SDK's ICE configuration via `ice_servers` on every
+    # grant. Empty by default: no third-party host is a default. STUN URLs,
+    # e.g. ["stun:stun.example.com:3478"]; an env var may list them
+    # space- or comma-separated.
+    "RTC_STUN_SERVERS": [],
+    # TURN URLs, e.g. ["turn:turn.example.com:3478?transport=udp",
+    # "turns:turn.example.com:443?transport=tcp"]. Served only together with
+    # RTC_TURN_SECRET: each grant carries a time-limited credential derived
+    # from it (coturn `use-auth-secret`), never the secret itself.
+    "RTC_TURN_SERVERS": [],
+    "RTC_TURN_SECRET": "",
+    # Lifetime of one TURN credential. Like CALL_TOKEN_TTL_SECONDS: an ICE
+    # restart after a network change re-authenticates, so shorter than the
+    # longest tolerable call is a call that cannot recover.
+    "RTC_TURN_CREDENTIAL_TTL_SECONDS": 7200,
     # Recording-egress object store (used only by start_room_egress). Left
     # empty: the recording pipeline is a seam in v0.1.0, not wired by default.
     "EGRESS_S3_ENDPOINT": "",

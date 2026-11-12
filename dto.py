@@ -28,6 +28,21 @@ class RoomResponse:
 
 
 @dataclass
+class IceServer:
+    """One ``RTCIceServer`` entry, passed to the media SDK unchanged.
+
+    Attributes:
+        urls: ``stun:`` / ``turn:`` / ``turns:`` URLs.
+        username: The TURN username; "" for STUN.
+        credential: The TURN credential; "" for STUN.
+    """
+
+    urls: List[str]
+    username: str = ""
+    credential: str = ""
+
+
+@dataclass
 class ParticipantResponse:
     """A participant in a room.
 
@@ -55,12 +70,16 @@ class JoinResponse:
         room: The room joined.
         participant: The caller's participant row.
         token: A signed join token (only when status == admitted).
+        ice_servers: STUN/TURN servers to add to the media SDK's ICE
+            configuration (``stapel_video.ice``); empty when none are
+            configured or no token was minted.
     """
 
     status: str
     room: RoomResponse
     participant: ParticipantResponse
     token: Optional[str] = None
+    ice_servers: List[IceServer] = field(default_factory=list)
 
 
 @dataclass

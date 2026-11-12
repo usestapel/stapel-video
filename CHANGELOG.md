@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] — proposed 0.14.0
+
+### Added — `ice_servers` on every media grant; `RTC_STUN_SERVERS` / `RTC_TURN_*`
+
+Minor, no migration. **Response bodies gain a field** (`ice_servers`, a list
+of `{urls, username, credential}`) on `POST /rooms`, `POST /rooms/{code}/join`,
+`POST /calls`, `POST /calls/{id}/accept` and `POST /calls/{id}/token`;
+regenerate the frontend pair and pass the list to the media SDK's
+`rtcConfig.iceServers`.
+
+Without TURN on the media server a browser had no ICE servers beyond what the
+media server announced, and calls between peers behind NAT never connected.
+New settings, all empty by default: `RTC_STUN_SERVERS` (STUN URLs),
+`RTC_TURN_SERVERS` + `RTC_TURN_SECRET` (TURN with a per-grant time-limited
+credential, coturn `use-auth-secret` scheme; the secret is never sent),
+`RTC_TURN_CREDENTIAL_TTL_SECONDS` (7200). New system check
+`stapel_video.W008`: both empty outside DEBUG / a `prototype` posture, or TURN
+URLs without a secret. Tests: `tests/test_ice_servers.py`.
+
 ## [0.13.0] — 2026-09-18
 
 ### Fixed — `POST /rooms/{join_code}/lobby/deny` declared its own REQUEST body as its answer

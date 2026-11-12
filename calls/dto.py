@@ -1,6 +1,8 @@
 """Dataclass DTOs for the call API — never ORM instances."""
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from ..dto import IceServer
 
 
 @dataclass
@@ -56,11 +58,15 @@ class CallTokenResponse:
         url: The media server the token is for — where the BROWSER connects,
             which on a host-networked deployment is not where the server
             connects.
+        ice_servers: STUN/TURN servers to add to the media SDK's ICE
+            configuration (``stapel_video.ice``); empty when none are
+            configured.
     """
 
     call: CallResponse
     token: str
     url: str
+    ice_servers: List[IceServer] = field(default_factory=list)
 
 
 @dataclass
@@ -83,10 +89,13 @@ class MediaTokenResponse:
     Attributes:
         token: A fresh signed media token for the caller of this request.
         url: Where the browser connects.
+        ice_servers: STUN/TURN servers for the media SDK, as on the grant
+            this one replaces (TURN credentials are fresh).
     """
 
     token: str
     url: str
+    ice_servers: List[IceServer] = field(default_factory=list)
 
 
 # ── Request DTOs ────────────────────────────────────────────────────────────

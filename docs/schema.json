@@ -853,6 +853,13 @@
           "url": {
             "type": "string",
             "description": "The media server the token is for — where the BROWSER connects,"
+          },
+          "ice_servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IceServer"
+            },
+            "description": "STUN/TURN servers to add to the media SDK's ICE"
           }
         },
         "required": [
@@ -876,6 +883,30 @@
         },
         "required": [
           "participant"
+        ]
+      },
+      "IceServer": {
+        "type": "object",
+        "description": "One ``RTCIceServer`` entry, passed to the media SDK unchanged.",
+        "properties": {
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "``stun:`` / ``turn:`` / ``turns:`` URLs"
+          },
+          "username": {
+            "type": "string",
+            "description": "The TURN username; \"\" for STUN"
+          },
+          "credential": {
+            "type": "string",
+            "description": "The TURN credential; \"\" for STUN"
+          }
+        },
+        "required": [
+          "urls"
         ]
       },
       "JoinRequest": {
@@ -917,6 +948,13 @@
             "type": "string",
             "nullable": true,
             "description": "A signed join token (only when status == admitted)"
+          },
+          "ice_servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IceServer"
+            },
+            "description": "STUN/TURN servers to add to the media SDK's ICE"
           }
         },
         "required": [
@@ -949,6 +987,13 @@
           "url": {
             "type": "string",
             "description": "Where the browser connects"
+          },
+          "ice_servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IceServer"
+            },
+            "description": "STUN/TURN servers for the media SDK, as on the grant"
           }
         },
         "required": [

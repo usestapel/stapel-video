@@ -40,6 +40,7 @@ from .errors import (
     ERR_404_ROOM_NOT_FOUND,
     ERR_404_SCOPE_NOT_FOUND,
 )
+from .ice import ice_servers_for
 from .models import AccessLevel, ParticipantRole
 from .providers import VideoProviderError
 from .scope import get_scope_provider
@@ -204,6 +205,7 @@ class RoomListCreateView(SerializerSeamMixin, APIView):
                     room=room_to_dto(room),
                     participant=participant_to_dto(host),
                     token=token,
+                    ice_servers=ice_servers_for(request.user.pk),
                 )
             ),
             status=status.HTTP_201_CREATED,
@@ -263,6 +265,9 @@ class RoomJoinView(SerializerSeamMixin, APIView):
                     room=room_to_dto(room),
                     participant=participant_to_dto(result["participant"]),
                     token=result.get("token"),
+                    ice_servers=(
+                        ice_servers_for(request.user.pk) if result.get("token") else []
+                    ),
                 )
             )
         )
