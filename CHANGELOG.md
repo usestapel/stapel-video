@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — proposed 0.14.0
+## [0.14.0] — 2026-11-13
 
 ### Added — `ice_servers` on every media grant; `RTC_STUN_SERVERS` / `RTC_TURN_*`
 
