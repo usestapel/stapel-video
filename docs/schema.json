@@ -680,7 +680,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookAck"
+                }
+              }
+            },
+            "description": ""
           }
         }
       }
@@ -1225,6 +1232,24 @@
           "presence_seconds",
           "rooms",
           "user_id"
+        ]
+      },
+      "WebhookAck": {
+        "type": "object",
+        "description": "The ingress's answer to a provider webhook it verified.",
+        "properties": {
+          "event": {
+            "type": "string",
+            "nullable": true,
+            "description": "The provider's event name, as parsed from the signed body"
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "Always true on a 200; a body that fails verification is a 400"
+          }
+        },
+        "required": [
+          "event"
         ]
       }
     },

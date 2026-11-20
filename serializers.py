@@ -18,6 +18,7 @@ from .dto import (
     ScopeUsageMonth,
     ScopeUsageResponse,
     ScopeUsageRow,
+    WebhookAck,
 )
 
 
@@ -79,3 +80,8 @@ class JoinRequestSerializer(StapelDataclassSerializer):
 class LobbyActionRequestSerializer(StapelDataclassSerializer):
     class Meta:
         dataclass = LobbyActionRequest
+
+
+class WebhookAckSerializer(StapelDataclassSerializer):
+    class Meta:
+        dataclass = WebhookAck

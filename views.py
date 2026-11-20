@@ -45,6 +45,7 @@ from .models import AccessLevel, ParticipantRole
 from .providers import VideoProviderError
 from .scope import get_scope_provider
 from .serializers import (
+    WebhookAckSerializer,
     AdmitResponseSerializer,
     DenyResponseSerializer,
     JoinRequestSerializer,
@@ -534,7 +535,7 @@ class WebhookIngressView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes: list = []
 
-    @extend_schema(request=None, responses={200: None})
+    @extend_schema(request=None, responses={200: WebhookAckSerializer})
     def post(self, request):  # noqa: R007
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
         try:

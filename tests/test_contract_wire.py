@@ -506,8 +506,7 @@ def empty_state(method, path, code=None):
 #: the gate points it at this module's own ``FakeProvider`` exactly the way a
 #: deployment points it at a real media server — and the token minting, the
 #: state machine, the lobby and the presence rollup all run for real on this
-#: side of it. ``POST /webhook`` declares no JSON body at all (``responses=
-#: {200: None}``) and is therefore not an operation here.
+#: side of it.
 UNDRIVABLE: dict = {}
 
 #: Where the rows live, for operations whose collection is NESTED in an
@@ -735,6 +734,17 @@ def _call_token(call):
         params={"call_id": call_id},
         data={"client_session_id": "tab-1"},
     )
+
+
+# ── provider ingress ─────────────────────────────────────────────────────────
+
+
+@recipe("POST", "/webhook")
+def _webhook(call):
+    """An event nothing here handles: verified, acknowledged, no work."""
+    from rest_framework.test import APIClient
+
+    return call(APIClient(), data={"event": "room_started"}, HTTP_AUTHORIZATION="valid")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

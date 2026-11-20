@@ -111,6 +111,19 @@ class DenyResponse:
     participant: ParticipantResponse
 
 
+@dataclass
+class WebhookAck:
+    """The ingress's answer to a provider webhook it verified.
+
+    Attributes:
+        event: The provider's event name, as parsed from the signed body.
+        ok: Always true on a 200; a body that fails verification is a 400.
+    """
+
+    event: Optional[str]
+    ok: bool = True
+
+
 # ── Request DTOs ────────────────────────────────────────────────────────────
 
 

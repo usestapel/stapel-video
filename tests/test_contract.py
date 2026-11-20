@@ -44,7 +44,7 @@ DOCS = REPO / "docs"
 TRIAD = ("schema.json", "flows.json", "errors.json")
 # The fifth artifact (badge-canon §3): docs/llms.txt, rendered from
 # docs/capabilities.json (+schema/errors/flows) by stapel_tools.llms_txt.
-ARTIFACTS = TRIAD + ("capabilities.json", "llms.txt")
+ARTIFACTS = TRIAD + ("schema.v2.json", "capabilities.json", "llms.txt")
 #: Must match the Makefile's `contract` / `contract-check` targets. Raised to
 #: 8500 in 0.11.0 (from 6000 in 0.7.0, from 5000 in 0.6.0, from the
 #: generator's 4000 default) when 1:1 calls added a second lifecycle to the

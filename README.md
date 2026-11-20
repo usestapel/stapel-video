@@ -24,13 +24,13 @@ pip install stapel-video
 
 | Fact | Value |
 |---|---|
-| Version | `0.14.0` |
+| Version | `0.14.1` |
 | Python | `>=3.11` (3.11, 3.12, 3.13, 3.14) |
 | HTTP operations | 15 |
 | Config axes | 7 |
 | Usage surface | 45 |
 | Extension points | 16 |
-| Error codes | 57 |
+| Error codes | 58 |
 | Fleet dependencies | [`stapel-auth`](https://github.com/usestapel/stapel-auth) (optional) · [`stapel-core`](https://github.com/usestapel/stapel-core) · [`stapel-profiles`](https://github.com/usestapel/stapel-profiles) (optional) · [`stapel-recordings`](https://github.com/usestapel/stapel-recordings) (optional) · [`stapel-workspaces`](https://github.com/usestapel/stapel-workspaces) (optional) |
 
 ## Documentation

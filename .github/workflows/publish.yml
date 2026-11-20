@@ -116,7 +116,7 @@ jobs:
         run: python -c "import stapel_video; print('import OK')"
 
       - name: Install test dependencies
-        run: pip install pytest pytest-django pytest-asyncio pytest-cov "stapel-tools>=0.9.1,<1" "channels>=4.0" daphne
+        run: pip install pytest pytest-django pytest-asyncio pytest-cov "stapel-tools>=0.84.0,<1" "channels>=4.0" daphne
 
       - name: Tests with coverage
         run: |
